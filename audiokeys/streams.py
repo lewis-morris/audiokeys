@@ -26,7 +26,7 @@ def route_stream_to_null_sink(sink_input_idx: int, sink_name="audiokeys_null"):
     # create the sink once
     sinks = [s for s in pc.sink_list() if s.name == sink_name]
     if not sinks:
-        mod_idx = pc.module_load("module-null-sink", f"sink_name={sink_name}")
+        pc.module_load("module-null-sink", f"sink_name={sink_name}")
         sinks = [s for s in pc.sink_list() if s.name == sink_name]
 
     null_sink = sinks[0]
