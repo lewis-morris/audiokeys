@@ -35,9 +35,9 @@ source.
 # AudioKeys is not installed (e.g. during development), fall back to
 # sibling modules in the same directory.
 try:
-    from audiokeys.utils import elevate_and_setup_uinput, resource_path  # type: ignore
+    from audiokeys.utils import elevate_and_setup_uinput  # type: ignore
 except Exception:
-    from utils import elevate_and_setup_uinput, resource_path  # type: ignore
+    from utils import elevate_and_setup_uinput  # type: ignore
 
 
 class KeySender:
@@ -133,7 +133,9 @@ class KeySender:
 
         # If we still have no codes (unlikely), fall back to default letter set
         if not requested_codes:
-            requested_codes = {getattr(uinput, f"KEY_{c}") for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}
+            requested_codes = {
+                getattr(uinput, f"KEY_{c}") for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            }
 
         # Attempt to open the uinput device
         try:
@@ -146,7 +148,7 @@ class KeySender:
                 "Elevated Privileges Required",
                 "Cannot open /dev/uinput—\n"
                 "you need permission to access the uinput device.\n\n"
-                "Audiokeys will attempt to configure your system now."
+                "Audiokeys will attempt to configure your system now.",
             )
             # Our helper to write the udev rule, reload rules, add group, etc.
             elevate_and_setup_uinput()
@@ -163,6 +165,7 @@ class KeySender:
         print(f"⚠️  {reason}")
         try:
             from pynput.keyboard import Controller  # type: ignore
+
             self.ctrl = Controller()
             self.backend = "pynput"
         except ImportError:

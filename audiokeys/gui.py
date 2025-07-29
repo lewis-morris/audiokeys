@@ -6,9 +6,8 @@ audiokeys — PySide 6
 
 from __future__ import annotations
 
-import os
 import sys
-from typing import MutableMapping, Optional
+from typing import Optional
 
 from q_materialise import inject_style
 

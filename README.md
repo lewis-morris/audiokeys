@@ -35,6 +35,8 @@ Pre-built releases for Linux and Windows are available on the [GitHub Releases](
 4. **Audio Device:** Select the specific audio device from the dropdown.
 5. Click **Start Listening** to begin detecting notes. Detected notes will send keystrokes and appear in the log.
 6. Click **Stop Listening** to end.
+7. Use **Calibrate Selected Device** in Settings to measure background noise and
+   optionally run pitch calibration for more reliable note detection.
 
 ## Configuration Persistence
 
