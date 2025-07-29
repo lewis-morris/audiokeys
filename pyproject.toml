@@ -1,0 +1,47 @@
+[project]
+name = "audiokeys"
+version = "0.1.0"
+description = """AudioKeys transforms any instrument into a versatile input device by listening to your chosen
+               audio source, detecting each played note in real time, and instantly translating it into a keystroke.
+               Whether you’re strumming a guitar, tapping a piano, or blowing into a wind instrument, each note in an
+               octive can be mapped to a unique character key, letting you “type” with music, trigger game controls,
+               automate workflows, or compose in your favorite software without touching your keyboard.
+
+               Select the audio device, configure your note‑to‑key mapping, and watch as your instrument becomes an
+               intuitive, hands‑free controller for virtually any application."""
+authors = [
+    { name = "Lewis Morris (Arched dev)", email = "lewis@arched.dev"}
+]
+license = {text = "MIT"}
+readme = {file = "README.md"}
+homepage = "https://arched.dev"
+repository = "https://github.com/lewis-morris/audiokeys"
+keywords = ["piano", "keyboard", "input device", "audio", "music", "automation", "game controls"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13"
+]
+requires-python = ">=3.13"
+dependencies = [
+    # Core functionality
+    "aubio>=0.4.9",
+    "numpy>=2.3.1",
+    "sounddevice>=0.5.2",
+    "pyside6>=6.9.1",
+    # Key‑event backends: use pynput everywhere, with python‑uinput on Linux
+    "pynput>=1.8.1",
+    "python-uinput==1.0.1; sys_platform == 'linux'",
+    # PulseAudio control is only required when running on Linux.  It is safe to
+    # omit on other platforms because stream routing helpers have been removed.
+    "pulsectl>=24.12.0; sys_platform == 'linux'",
+    "scipy>=1.16.0",
+]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.14.2",
+]

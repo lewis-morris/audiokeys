@@ -1,0 +1,8 @@
+/build/
+/dist/
+/.venv/
+# Byte‑compiled / cache
+__pycache__/
+*.py[cod]
+localpycs/
+/backups/
