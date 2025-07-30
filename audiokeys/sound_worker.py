@@ -6,6 +6,7 @@ import gc
 import threading
 from collections import deque
 from typing import Mapping, MutableMapping, Optional
+import time
 
 import numpy as np
 import sounddevice as sd
@@ -47,6 +48,7 @@ class SoundWorker(QtCore.QThread):
         noise_gate_margin: float = NOISE_GATE_MARGIN,
         match_threshold: float = 0.8,
         send_enabled: bool = True,
+        min_press_interval: float = 0.25,
     ) -> None:
         super().__init__(parent)
         self.device_index = device_index
@@ -57,6 +59,8 @@ class SoundWorker(QtCore.QThread):
         self.buffer_size = buffer_size
         self.hop_size = hop_size
         self.match_threshold = match_threshold
+        self.min_press_interval = min_press_interval
+        self._last_emit = 0.0
         self._stop_event = threading.Event()
         self.stream: Optional[sd.InputStream] = None
         self.buffer: deque[np.ndarray] = deque()
@@ -78,9 +82,12 @@ class SoundWorker(QtCore.QThread):
         self.buffer.clear()
         key = match_sample(segment, self.samples, threshold=self.match_threshold)
         if key is not None:
-            self.sender.press(key)
-            self.keyDetected.emit(key)
-            self.sender.release(key)
+            now = time.time()
+            if now - self._last_emit >= self.min_press_interval:
+                self.sender.press(key)
+                self.keyDetected.emit(key)
+                self.sender.release(key)
+                self._last_emit = now
 
     # --------------------------------------------------------------
     def _callback(self, indata, frames, _time, status) -> None:  # noqa: D401

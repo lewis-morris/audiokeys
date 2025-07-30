@@ -104,14 +104,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings = QSettings("arched.dev", "audiokeys")
         self.setWindowTitle("Piano Keyboard")
         # 2️⃣ load from settings, falling back to DEFAULT_NOTE_MAP
+        # note_map now stores custom sample identifiers → key names
         self.note_map: dict[str, str] = {}
-        for note in constants.NOTE_NAMES:
-            # the stored value is the single‐char, or use the default
-            self.note_map[note] = self.settings.value(
-                note, constants.DEFAULT_NOTE_MAP[note]
-            )
-
-        # recorded samples for each note
+        # recorded samples keyed by identifier
         self.samples: dict[str, np.ndarray] = {}
 
         self.worker: Optional[SoundWorker] = None
@@ -154,48 +149,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         root_layout.addWidget(self._make_heading("Key Mapping"))
 
-        # 1️⃣ Note mapping grid
-        grid = QtWidgets.QGridLayout()
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(8)
+        # List of dynamically added mappings
+        self.mapping_list = QtWidgets.QVBoxLayout()
+        root_layout.addLayout(self.mapping_list)
 
-        notes_per_row = 3
-        for idx, note in enumerate(constants.NOTE_NAMES):
-            row = idx // notes_per_row
-            col = (idx % notes_per_row) * 5
-
-            # Static note label (e.g. "C", "C#", etc.)
-            lbl = QtWidgets.QLabel(note)
-            lbl.setFixedWidth(24)
-
-            # Display current key mapping
-            key_lbl = QtWidgets.QLineEdit()
-            key_lbl.setReadOnly(True)
-            key_lbl.setText(self.note_map.get(note, ""))
-            key_lbl.setFixedWidth(120)
-            self.key_labels[note] = key_lbl
-
-            # Button to open key selector
-            btn = QtWidgets.QPushButton()
-            btn.setIcon(QIcon(self.style().standardIcon(QtWidgets.QStyle.SP_ArrowDown)))
-            btn.clicked.connect(lambda checked=False, n=note: self._choose_key(n))
-
-            rec_btn = QtWidgets.QPushButton("Record")
-            rec_btn.clicked.connect(
-                lambda checked=False, n=note: self._record_sample(n)
-            )
-            del_btn = QtWidgets.QPushButton("Delete")
-            del_btn.clicked.connect(
-                lambda checked=False, n=note: self._delete_sample(n)
-            )
-
-            grid.addWidget(lbl, row, col)
-            grid.addWidget(key_lbl, row, col + 1)
-            grid.addWidget(btn, row, col + 2)
-            grid.addWidget(rec_btn, row, col + 3)
-            grid.addWidget(del_btn, row, col + 4)
-
-        root_layout.addLayout(grid)
+        add_btn = QtWidgets.QPushButton("Add Key Mapping")
+        add_btn.clicked.connect(self._add_mapping)
+        root_layout.addWidget(add_btn)
 
         audio_heading_layout = QtWidgets.QHBoxLayout()
         audio_heading = self._make_heading("Audio Input Device")
@@ -446,13 +406,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         # Configure channels and WASAPI loopback if needed
-        extra = None
         channels = 1
-
         if want_loopback and sys.platform.startswith("win"):
             # WASAPI loopback requires extra_settings; many devices prefer 2 channels
             channels = 2
-            extra = sd.WasapiSettings(loopback=True)
 
         # Stop any existing worker
         if self.worker and self.worker.isRunning():
@@ -469,10 +426,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings.value("noise_gate_margin", constants.NOISE_GATE_MARGIN)
         )
         hp_cutoff = float(self.settings.value("hp_cutoff", constants.HP_FILTER_CUTOFF))
-        midi_tol = float(
+        # Retrieve user‑tuned parameters
+        _ = float(
             self.settings.value("midi_tolerance", constants.MIDI_SEMITONE_TOLERANCE)
         )
-        conf_thresh = float(
+        _ = float(
             self.settings.value(
                 "confidence_threshold", constants.AUBIO_CONFIDENCE_THRESHOLD
             )
@@ -480,16 +438,14 @@ class MainWindow(QtWidgets.QMainWindow):
         sample_rate = int(self.settings.value("sample_rate", constants.SAMPLE_RATE))
         buffer_size = int(self.settings.value("buffer_size", constants.BUFFER_SIZE))
         hop_size = int(self.settings.value("hop_size", constants.HOP_SIZE))
-        detection_method = str(self.settings.value("detection_method", "aubio"))
-        # Retrieve any previously calibrated noise floor for this device
+        _ = str(self.settings.value("detection_method", "aubio"))
         noise_floor_key = f"noise_floor_{idx}"
         noise_floor_val = self.settings.value(noise_floor_key, None)
-        preset_noise_floor = None
         try:
             if noise_floor_val is not None:
-                preset_noise_floor = float(noise_floor_val)
+                float(noise_floor_val)
         except Exception:
-            preset_noise_floor = None
+            pass
 
         self.worker = SoundWorker(
             idx,
@@ -555,46 +511,86 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # -----------------------------------------------------------------
     # Key selection
-    def _choose_key(self, note: str) -> None:
-        """
-        Open a modal dialog allowing the user to choose a key mapping for
-        the specified note.  On acceptance the mapping and UI label are
-        updated and persisted via QSettings.
-        """
-        # Stop any running worker to avoid key presses while selecting a mapping
+    def _add_mapping(self) -> None:
+        """Record a new sound and map it to a keyboard key."""
+        idx = self.device_combo.currentData()
+        if idx is None:
+            QtWidgets.QMessageBox.warning(self, "No device", "Select an audio device.")
+            return
+
+        sample = record_until_silence(int(idx))
+        if sample.size == 0:
+            QtWidgets.QMessageBox.warning(self, "No sound", "No audio was recorded.")
+            return
+
+        dlg = KeySelectDialog(self, "sound", "")
+        if dlg.exec() != QtWidgets.QDialog.Accepted:
+            return
+        key_name = dlg.get_selected_key()
+        sample_id = f"sample_{len(self.samples) + 1}"
+        self.samples[sample_id] = sample
+        self.note_map[sample_id] = key_name
+
+        self._add_mapping_row(sample_id, key_name)
+
+    def _add_mapping_row(self, sample_id: str, key_name: str) -> None:
+        row = QtWidgets.QHBoxLayout()
+        lbl = QtWidgets.QLabel(sample_id)
+        key_lbl = QtWidgets.QLineEdit(key_name)
+        key_lbl.setReadOnly(True)
+        self.key_labels[sample_id] = key_lbl
+
+        change_btn = QtWidgets.QPushButton("Change Key")
+        change_btn.clicked.connect(lambda _=False, s=sample_id: self._change_key(s))
+
+        rec_btn = QtWidgets.QPushButton("Re-record")
+        rec_btn.clicked.connect(lambda _=False, s=sample_id: self._record_again(s))
+
+        del_btn = QtWidgets.QPushButton("Delete")
+        del_btn.clicked.connect(
+            lambda _=False, s=sample_id, l=row: self._delete_mapping(s, l)
+        )
+
+        row.addWidget(lbl)
+        row.addWidget(key_lbl)
+        row.addWidget(change_btn)
+        row.addWidget(rec_btn)
+        row.addWidget(del_btn)
+        container = QtWidgets.QWidget()
+        container.setLayout(row)
+        self.mapping_list.addWidget(container)
+
+    def _change_key(self, sample_id: str) -> None:
         if self.worker and self.worker.isRunning():
             self._stop_listening()
-        current_key = self.note_map.get(note, "")
-        dlg = KeySelectDialog(self, note, current_key)
+        current = self.note_map.get(sample_id, "")
+        dlg = KeySelectDialog(self, sample_id, current)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
-            selected = dlg.get_selected_key()
-            self.note_map[note] = selected
-            # update label and persist
-            if note in self.key_labels:
-                self.key_labels[note].setText(selected)
-            self.settings.setValue(note, selected)
+            key = dlg.get_selected_key()
+            self.note_map[sample_id] = key
+            if sample_id in self.key_labels:
+                self.key_labels[sample_id].setText(key)
 
-    def _record_sample(self, note: str) -> None:
-        if note in self.samples:
-            if (
-                QtWidgets.QMessageBox.question(
-                    self,
-                    "Override sample",
-                    f"Replace existing sample for {note}?",
-                )
-                != QtWidgets.QMessageBox.Yes
-            ):
-                return
+    def _record_again(self, sample_id: str) -> None:
         idx = self.device_combo.currentData()
         if idx is None:
             QtWidgets.QMessageBox.warning(self, "No device", "Select an audio device.")
             return
         sample = record_until_silence(int(idx))
-        self.samples[note] = sample
+        if sample.size:
+            self.samples[sample_id] = sample
 
-    def _delete_sample(self, note: str) -> None:
-        if note in self.samples:
-            del self.samples[note]
+    def _delete_mapping(self, sample_id: str, layout: QtWidgets.QHBoxLayout) -> None:
+        if sample_id in self.samples:
+            del self.samples[sample_id]
+        if sample_id in self.note_map:
+            del self.note_map[sample_id]
+        if sample_id in self.key_labels:
+            del self.key_labels[sample_id]
+        # remove widget from layout
+        item = layout.parentWidget()
+        if item is not None:
+            item.setParent(None)
 
     # -----------------------------------------------------------------
     # Amplitude meter callback
