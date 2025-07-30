@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 from typing import Optional
 
+import numpy as np
 from q_materialise import inject_style
 
 # ``sounddevice`` is used to enumerate audio capture devices and open
@@ -55,11 +56,13 @@ between launches without editing the ``constants.py`` file.
 # ``pip install -e .``.
 try:
     from audiokeys import constants  # type: ignore
+    from audiokeys import note_calibration  # type: ignore
     from audiokeys.audio_worker import AudioWorker  # type: ignore
     from audiokeys.utils import resource_path  # type: ignore
 except Exception:
     # Local fallback imports – only works when run from the project root
     import constants  # type: ignore
+    import note_calibration  # type: ignore
     from audio_worker import AudioWorker  # type: ignore
     from utils import resource_path  # type: ignore
 
@@ -640,6 +643,9 @@ class MainWindow(QtWidgets.QMainWindow):
         audio_action = settings_menu.addAction("Audio Parameters…")
         audio_action.triggered.connect(self._open_settings_dialog)
 
+        notes_action = settings_menu.addAction("Calibrate Notes…")
+        notes_action.triggered.connect(self._open_note_calibration)
+
         # Help menu providing docs and about
         help_menu = menubar.addMenu("Help")
         docs_action = help_menu.addAction("Visit Docs")
@@ -674,6 +680,12 @@ class MainWindow(QtWidgets.QMainWindow):
             # does not implicitly start listening.  Users can start
             # listening again by pressing the "Start Listening" button.
             pass
+
+    # -----------------------------------------------------------------
+    def _open_note_calibration(self) -> None:
+        """Open the note calibration dialog."""
+        dlg = NoteCalibrationDialog(self)
+        dlg.exec()
 
     # -----------------------------------------------------------------
     def _visit_docs(self) -> None:
@@ -1203,3 +1215,102 @@ class SettingsDialog(QtWidgets.QDialog):
             event.ignore()
             return
         super().closeEvent(event)
+
+
+class NoteCalibrationDialog(QtWidgets.QDialog):
+    """Dialog guiding the user through note calibration."""
+
+    def __init__(self, parent: MainWindow) -> None:
+        super().__init__(parent)
+        self.parent_window = parent
+        self.setWindowTitle("Calibrate Notes")
+        if parent.windowIcon():
+            self.setWindowIcon(parent.windowIcon())
+
+        self.status = QtWidgets.QLabel("Click Start to record each note in octave 4.")
+        self.start_btn = QtWidgets.QPushButton("Start")
+        self.start_btn.clicked.connect(self._start)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(self.status)
+        layout.addWidget(self.start_btn)
+
+    def _start(self) -> None:
+        device_idx = self.parent_window.device_combo.currentData()
+        if device_idx is None or device_idx == -1:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "No device selected",
+                "Please select an audio device in the main window before calibrating.",
+            )
+            return
+
+        sample_rate = int(
+            self.parent_window.settings.value("sample_rate", constants.SAMPLE_RATE)
+        )
+        hop_size = int(
+            self.parent_window.settings.value("hop_size", constants.HOP_SIZE)
+        )
+
+        channels = 1
+        try:
+            import sys as _sys
+
+            if self.parent_window.capture_out.isChecked() and _sys.platform.startswith(
+                "win"
+            ):
+                channels = 2
+        except Exception:
+            channels = 1
+
+        def record_func(
+            note: str,
+            duration: float,
+            rate: int,
+            ch: int,
+            dev: Optional[int],
+        ) -> np.ndarray:
+            self.status.setText(f"Recording {note}…")
+            QtWidgets.QApplication.processEvents()
+            data = sd.rec(
+                int(duration * rate),
+                samplerate=rate,
+                channels=ch,
+                device=dev,
+                dtype="float32",
+            )
+            sd.wait()
+            if data.ndim > 1:
+                data = data.mean(axis=1)
+            return data.reshape(-1)
+
+        self.start_btn.setEnabled(False)
+        QtWidgets.QApplication.processEvents()
+
+        try:
+            results = note_calibration.calibrate_pitches(
+                constants.NOTE_NAMES,
+                duration=1.0,
+                sample_rate=sample_rate,
+                hop_size=hop_size,
+                channels=channels,
+                octave=4,
+                device=int(device_idx),
+                record_func=record_func,
+                interactive=False,
+            )
+            tol = note_calibration.calculate_midi_tolerance(results)
+            self.parent_window.settings.setValue("midi_tolerance", tol)
+            QtWidgets.QMessageBox.information(
+                self,
+                "Calibration complete",
+                f"Recommended pitch tolerance: {tol:.2f} semitones.\n"
+                "This value has been saved for future sessions.",
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(
+                self, "Calibration error", f"An error occurred during calibration:\n{e}"
+            )
+        finally:
+            self.status.clear()
+            self.start_btn.setEnabled(True)
