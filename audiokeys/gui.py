@@ -57,13 +57,15 @@ between launches without editing the ``constants.py`` file.
 try:
     from audiokeys import constants  # type: ignore
     from audiokeys import note_calibration  # type: ignore
-    from audiokeys.audio_worker import AudioWorker  # type: ignore
+    from audiokeys.sound_worker import SoundWorker  # type: ignore
+    from audiokeys.sample_matcher import record_until_silence  # type: ignore
     from audiokeys.utils import resource_path  # type: ignore
 except Exception:
     # Local fallback imports – only works when run from the project root
     import constants  # type: ignore
     import note_calibration  # type: ignore
-    from audio_worker import AudioWorker  # type: ignore
+    from sound_worker import SoundWorker  # type: ignore
+    from sample_matcher import record_until_silence  # type: ignore
     from utils import resource_path  # type: ignore
 
 # ─── Note ──────────────────────────────────────────────────────────────────
@@ -109,7 +111,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 note, constants.DEFAULT_NOTE_MAP[note]
             )
 
-        self.worker: Optional[AudioWorker] = None
+        # recorded samples for each note
+        self.samples: dict[str, np.ndarray] = {}
+
+        self.worker: Optional[SoundWorker] = None
 
         # Track test mode (True disables key presses).  Persist value in settings.
         tm_val = self.settings.value("test_mode", False)
@@ -157,7 +162,7 @@ class MainWindow(QtWidgets.QMainWindow):
         notes_per_row = 3
         for idx, note in enumerate(constants.NOTE_NAMES):
             row = idx // notes_per_row
-            col = (idx % notes_per_row) * 3
+            col = (idx % notes_per_row) * 5
 
             # Static note label (e.g. "C", "C#", etc.)
             lbl = QtWidgets.QLabel(note)
@@ -175,9 +180,20 @@ class MainWindow(QtWidgets.QMainWindow):
             btn.setIcon(QIcon(self.style().standardIcon(QtWidgets.QStyle.SP_ArrowDown)))
             btn.clicked.connect(lambda checked=False, n=note: self._choose_key(n))
 
+            rec_btn = QtWidgets.QPushButton("Record")
+            rec_btn.clicked.connect(
+                lambda checked=False, n=note: self._record_sample(n)
+            )
+            del_btn = QtWidgets.QPushButton("Delete")
+            del_btn.clicked.connect(
+                lambda checked=False, n=note: self._delete_sample(n)
+            )
+
             grid.addWidget(lbl, row, col)
             grid.addWidget(key_lbl, row, col + 1)
             grid.addWidget(btn, row, col + 2)
+            grid.addWidget(rec_btn, row, col + 3)
+            grid.addWidget(del_btn, row, col + 4)
 
         root_layout.addLayout(grid)
 
@@ -245,16 +261,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.level_bar.setValue(0)
         self.level_bar.setTextVisible(False)
         root_layout.addWidget(self.level_bar)
-
-        tuner_heading = self._make_heading("Tuner")
-        root_layout.addWidget(tuner_heading)
-        self.tuner_label = QtWidgets.QLabel("–")
-        self.tuner_label.setAlignment(QtCore.Qt.AlignCenter)
-        tuner_font = self.tuner_label.font()
-        tuner_font.setPointSize(tuner_font.pointSize() + 2)
-        tuner_font.setBold(True)
-        self.tuner_label.setFont(tuner_font)
-        root_layout.addWidget(self.tuner_label)
 
         # 3️⃣ Control row
         ctrl_layout = QtWidgets.QHBoxLayout()
@@ -485,30 +491,23 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             preset_noise_floor = None
 
-        self.worker = AudioWorker(
+        self.worker = SoundWorker(
             idx,
+            self.samples,
             self.note_map,
             channels=channels,
-            extra_settings=extra,
             sample_rate=sample_rate,
             buffer_size=buffer_size,
             hop_size=hop_size,
             hp_cutoff=hp_cutoff,
             noise_gate_duration=gate_dur,
             noise_gate_margin=gate_margin,
-            midi_tolerance=midi_tol,
-            confidence_threshold=conf_thresh,
-            detection_method=detection_method,
-            preset_noise_floor=preset_noise_floor,
-            # Disable sending when in test mode
+            match_threshold=0.8,
             send_enabled=not getattr(self, "test_mode", False),
         )
-        self.worker.noteDetected.connect(self._on_detected)
-        self.worker.noteReleased.connect(self._on_released)
+        self.worker.keyDetected.connect(self._on_key_detected)
         self.worker.finished.connect(self._on_worker_done)
-        # Connect continuous feedback for UI
         self.worker.amplitudeChanged.connect(self._on_amplitude_changed)
-        self.worker.pitchChanged.connect(self._on_pitch_changed)
         self.worker.start()
 
         self.start_btn.setText("Stop Listening")
@@ -524,8 +523,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # Reset meters when stopping
         if hasattr(self, "level_bar"):
             self.level_bar.setValue(0)
-        if hasattr(self, "tuner_label"):
-            self.tuner_label.setText("–")
         # Clear the output log so that new sessions start
         # fresh.  Without clearing the log, previous
         # detections persist and can cause confusion.
@@ -534,11 +531,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # -----------------------------------------------------------------
     # Worker callbacks
-    def _on_detected(self, note: str, freq: float):
-        self._append_log(f"Detected {note} ({freq:.1f} Hz) → key down")
-
-    def _on_released(self, note: str):
-        self._append_log(f"Released {note}")
+    def _on_key_detected(self, key: str) -> None:
+        self._append_log(f"Detected {key}")
+        if key in self.key_labels:
+            lbl = self.key_labels[key]
+            lbl.setStyleSheet("background-color: yellow")
+            QtCore.QTimer.singleShot(300, lambda: lbl.setStyleSheet(""))
 
     def _on_worker_done(self):
         # Safety if worker ends by itself (device closed etc.)ljh
@@ -547,8 +545,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # Reset meters
         if hasattr(self, "level_bar"):
             self.level_bar.setValue(0)
-        if hasattr(self, "tuner_label"):
-            self.tuner_label.setText("–")
 
     # -----------------------------------------------------------------
     def _append_log(self, msg: str):
@@ -578,6 +574,28 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.key_labels[note].setText(selected)
             self.settings.setValue(note, selected)
 
+    def _record_sample(self, note: str) -> None:
+        if note in self.samples:
+            if (
+                QtWidgets.QMessageBox.question(
+                    self,
+                    "Override sample",
+                    f"Replace existing sample for {note}?",
+                )
+                != QtWidgets.QMessageBox.Yes
+            ):
+                return
+        idx = self.device_combo.currentData()
+        if idx is None:
+            QtWidgets.QMessageBox.warning(self, "No device", "Select an audio device.")
+            return
+        sample = record_until_silence(int(idx))
+        self.samples[note] = sample
+
+    def _delete_sample(self, note: str) -> None:
+        if note in self.samples:
+            del self.samples[note]
+
     # -----------------------------------------------------------------
     # Amplitude meter callback
     def _on_amplitude_changed(self, rms: float) -> None:
@@ -586,12 +604,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.level_bar.setValue(level)
 
     # -----------------------------------------------------------------
-    # Pitch display callback
-    def _on_pitch_changed(self, freq: float, note: str) -> None:
-        self.tuner_label.setText(f"{note} ({freq:.1f} Hz)")
-
-    # -----------------------------------------------------------------
-
     # -----------------------------------------------------------------
     def _on_test_mode_toggled(self, checked: bool) -> None:
         """
