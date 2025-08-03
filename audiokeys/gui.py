@@ -31,7 +31,7 @@ except ImportError:
 
 # ─── Qt ────────────────────────────────────────────────────────────────────────
 from PySide6 import QtCore, QtGui, QtWidgets
-from PySide6.QtCore import QPoint, QSettings
+from PySide6.QtCore import QPoint, QSettings, QSize
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QToolTip
 
@@ -62,7 +62,7 @@ try:
     from audiokeys import constants  # type: ignore
     from audiokeys.sound_worker import SoundWorker  # type: ignore
     from audiokeys.sample_matcher import record_until_silence  # type: ignore
-    from audiokeys.utils import generate_sample_id, resource_path  # type: ignore
+    from audiokeys.utils import generate_sample_id, make_svg_toolbutton, resource_path  # type: ignore
     from audiokeys.noise_gate import calculate_noise_floor, trim_silence  # type: ignore
 except Exception:
     # Local fallback imports – only works when run from the project root
@@ -91,6 +91,64 @@ list_playback_streams = None  # placeholder for removed functionality
 # defined in that module and used by AudioWorker.  Keeping the constants in a
 # separate module avoids duplication and makes it easy to tune the system from
 # one place.
+
+
+class KeyMappingWindow(QtWidgets.QDialog):
+    """Separate window showing all key mappings in a scrollable list."""
+
+    def __init__(self, main_window: MainWindow):
+        super().__init__(main_window)
+        self.main_window = main_window
+        self.setWindowTitle("Key Mappings")
+        self.setModal(True)
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        top_row = QtWidgets.QHBoxLayout()
+        add_btn = QtWidgets.QPushButton("Add Key Mapping")
+        add_btn.clicked.connect(self._on_add)
+        top_row.addWidget(add_btn)
+        top_row.addStretch()
+        layout.addLayout(top_row)
+
+        self.scroll = QtWidgets.QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.inner = QtWidgets.QWidget()
+        self.inner_layout = QtWidgets.QVBoxLayout(self.inner)
+        self.inner_layout.setSpacing(6)
+        self.inner_layout.setContentsMargins(4, 4, 4, 4)
+        self.scroll.setWidget(self.inner)
+        layout.addWidget(self.scroll, 1)
+
+        btn_box = QtWidgets.QHBoxLayout()
+        close_btn = QtWidgets.QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_box.addStretch()
+        btn_box.addWidget(close_btn)
+        layout.addLayout(btn_box)
+
+        self.refresh()
+
+        self.setMinimumWidth(700)
+        self.setMinimumHeight(800)  # constrain height
+
+    def refresh(self):
+        # Clear existing rows
+        while self.inner_layout.count():
+            item = self.inner_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.setParent(None)
+
+        # Rebuild from the authoritative main_window.note_map
+        for sample_id, key_name in self.main_window.note_map.items():
+            row = self.main_window._make_mapping_row_widget(sample_id, key_name)
+            self.inner_layout.addWidget(row)
+        self.inner_layout.addStretch()
+
+    def _on_add(self):
+        self.main_window._add_mapping()
+        self.refresh()
 
 
 # ─── Key and audio workers are defined in separate modules ─────────────
@@ -214,64 +272,9 @@ class MainWindow(QtWidgets.QMainWindow):
         root_layout.setSpacing(16)
         root_layout.setContentsMargins(8, 8, 8, 8)
 
-        root_layout.addWidget(self._make_heading("Key Mapping"))
-
-        # Grid of dynamically added mappings (2 per row)
-        self.mapping_grid = QtWidgets.QGridLayout()
-        root_layout.addLayout(self.mapping_grid)
-
-        add_btn = QtWidgets.QPushButton("Add Key Mapping")
-        add_btn.clicked.connect(self._add_mapping)
-        root_layout.addWidget(add_btn)
-
-        audio_heading_layout = QtWidgets.QHBoxLayout()
-        audio_heading = self._make_heading("Audio Input Device")
-
-        # ── ⓘ info button --------------------------------------------
-        info_btn = QtWidgets.QToolButton()
-        info_btn.setIcon(
-            self.style().standardIcon(QtWidgets.QStyle.SP_MessageBoxInformation)
-        )
-        info_btn.setAutoRaise(True)
-        info_btn.setToolTip(
-            "<b>Capture modes</b><br><br>"
-            "<u>Microphone / Line‑in</u><br>Capture audio from any physical input device connected to your machine.<br><br>"
-            "<u>System Output</u><br>Capture all audio output (all running apps).<br><br>"
-        )
-
-        # show on hover (built‑in) *and* on click:
-        info_btn.clicked.connect(
-            lambda: QToolTip.showText(
-                info_btn.mapToGlobal(QPoint(0, info_btn.height())),
-                info_btn.toolTip(),
-                info_btn,
-            )
-        )
-
-        audio_heading_layout.addWidget(audio_heading)
-        audio_heading_layout.addWidget(info_btn)
-
-        root_layout.addLayout(audio_heading_layout)
-
-        source_layout = QtWidgets.QHBoxLayout()
-
-        # ── Capture‑source radio buttons ───────────────────────
-        self.capture_mic = QtWidgets.QRadioButton("Microphone / Line‑in")
-        self.capture_out = QtWidgets.QRadioButton("System Output")
-        self.capture_mic.setChecked(True)
-
-        for rb in (self.capture_mic, self.capture_out):
-            rb.toggled.connect(self._on_source_changed)
-            source_layout.addWidget(rb)
-
-        root_layout.addLayout(source_layout)
-
-        # 2️⃣ Device selector
-        dev_layout = QtWidgets.QHBoxLayout()
-        self.device_combo = QtWidgets.QComboBox()
-        self._populate_devices()
-        dev_layout.addWidget(self.device_combo, 1)
-        root_layout.addLayout(dev_layout)
+        mapping_btn = QtWidgets.QPushButton("View / Edit Key Mapping")
+        mapping_btn.clicked.connect(self._open_keymapping_window)
+        root_layout.addWidget(mapping_btn)
 
         root_layout.addWidget(self._make_heading("Output Log"))
         # 4️⃣ Log area
@@ -303,10 +306,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.test_checkbox.setChecked(self.test_mode)
         self.test_checkbox.toggled.connect(self._on_test_mode_toggled)
         ctrl_layout.addWidget(self.test_checkbox)
-        test_info_btn = QtWidgets.QToolButton()
-        test_info_btn.setIcon(
-            self.style().standardIcon(QtWidgets.QStyle.SP_MessageBoxInformation)
-        )
+        test_info_btn = make_svg_toolbutton(resource_path("assets/info.svg"), "Test Listening Info", lambda: QToolTip.showText(
+                test_info_btn.mapToGlobal(QPoint(0, test_info_btn.height())),
+                test_info_btn.toolTip(),
+                test_info_btn,
+            ))
+
         test_info_btn.setAutoRaise(True)
         test_info_btn.setToolTip(
             "<b>Test Listening</b><br><br>"
@@ -315,13 +320,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "mode to experiment with detection settings without triggering\n"
             "any applications."
         )
-        test_info_btn.clicked.connect(
-            lambda: QToolTip.showText(
-                test_info_btn.mapToGlobal(QPoint(0, test_info_btn.height())),
-                test_info_btn.toolTip(),
-                test_info_btn,
-            )
-        )
+
         ctrl_layout.addWidget(test_info_btn)
         ctrl_layout.addStretch()
         root_layout.addLayout(ctrl_layout)
@@ -330,25 +329,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resize(700, 800)
         self.setFixedSize(700, 800)
 
-    # -----------------------------------------------------------------
-    def _populate_devices(self) -> None:
-        """
-        Mic / Line‑in  → list standard input devices.
-        System Output  →
-          • Linux: list 'monitor' / 'loopback' input devices.
-          • Windows: list WASAPI OUTPUT devices (opened with loopback=True).
-        Keeps the last‑used device for the active mode when possible.
-        """
+
+    def _open_keymapping_window(self):
+        if not getattr(self, "keymapping_window", None):
+            self.keymapping_window = KeyMappingWindow(self)
+        self.keymapping_window.refresh()
+        self.keymapping_window.exec()
+
+    def _populate_device_combo(self) -> None:
+        """Legacy combo-box population (input vs loopback) copied from the original implementation."""
         is_windows = sys.platform.startswith("win")
-        want_loopback = self.capture_out.isChecked()
+        want_loopback = False
+        if hasattr(self, "capture_out"):
+            want_loopback = self.capture_out.isChecked()
+        else:
+            # fallback to stored setting for compatibility
+            val = self.settings.value("capture_out", False)
+            if isinstance(val, str):
+                want_loopback = val.lower() in ("true", "1", "yes", "y")
+            else:
+                want_loopback = bool(val)
 
         def is_monitor(name: str) -> bool:
             n = name.lower()
             return ("monitor" in n) or ("loopback" in n)
 
-        # Helper: format the visible label
         def label_for(idx: int, name: str, hostapi_name: str) -> str:
-            # Make WASAPI obvious in loopback mode on Windows
             if is_windows and want_loopback:
                 return f"{idx}: WASAPI · {name}"
             return f"{idx}: {name}"
@@ -356,7 +362,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.device_combo.blockSignals(True)
         self.device_combo.clear()
 
-        # Short‑circuit if the sounddevice module is unavailable
         if sd is None:
             self.device_combo.addItem("sounddevice module not available", -1)
             self.device_combo.blockSignals(False)
@@ -366,7 +371,6 @@ class MainWindow(QtWidgets.QMainWindow):
             devices = sd.query_devices()
             hostapis = sd.query_hostapis()
         except Exception as e:
-            # Graceful fallback if PortAudio is unhappy
             self.device_combo.addItem(f"Audio enumeration failed: {e}", -1)
             self.device_combo.blockSignals(False)
             return
@@ -377,62 +381,50 @@ class MainWindow(QtWidgets.QMainWindow):
             hostapi_name = hostapis[hostapi_idx]["name"]
 
             if not want_loopback:
-                # Mic / line‑in: real input devices, not monitors
                 if dev.get("max_input_channels", 0) >= 1 and not is_monitor(name):
                     self.device_combo.addItem(label_for(idx, name, hostapi_name), idx)
             else:
                 if is_windows:
-                    # Loopback on Windows needs an OUTPUT device on WASAPI
                     if ("wasapi" in hostapi_name.lower()) and dev.get(
                         "max_output_channels", 0
                     ) >= 1:
-                        self.device_combo.addItem(
-                            label_for(idx, name, hostapi_name), idx
-                        )
+                        self.device_combo.addItem(label_for(idx, name, hostapi_name), idx)
                 else:
-                    # Linux: monitors are exposed as input devices
                     if is_monitor(name) and dev.get("max_input_channels", 0) >= 1:
-                        self.device_combo.addItem(
-                            label_for(idx, name, hostapi_name), idx
-                        )
+                        self.device_combo.addItem(label_for(idx, name, hostapi_name), idx)
 
-        self.device_combo.blockSignals(False)
-
-        # Choose a sensible default / restore last used
         key = "device_out" if want_loopback else "device_in"
         preferred = self.settings.value(key, None)
-
-        # Fall back to PortAudio defaults if nothing stored
         if preferred is None:
             try:
-                # (input, output)
                 default_in, default_out = sd.default.device
             except Exception:
                 default_in = default_out = None
-
             preferred = default_out if (want_loopback and is_windows) else default_in
 
-        # Apply preferred if present in the list
         try:
             if preferred is not None:
                 row = self.device_combo.findData(int(preferred))
                 if row >= 0:
                     self.device_combo.setCurrentIndex(row)
+                    self.device_combo.blockSignals(False)
                     return
         except Exception:
             pass
 
-        # Otherwise pick first available item
         if self.device_combo.count():
             self.device_combo.setCurrentIndex(0)
 
-        # If no devices were found when capturing system output on
-        # Linux, present a placeholder entry so the combo box is not
-        # blank.  This informs the user that no monitor/loopback
-        # devices are available and suggests that a loopback device
-        # needs to be created via the system’s audio settings.
         if want_loopback and self.device_combo.count() == 0:
             self.device_combo.addItem("No system output devices found", -1)
+
+        self.device_combo.blockSignals(False)
+
+
+    def _populate_devices(self) -> None:
+        """Rebuild the audio input menu."""
+        if hasattr(self, "device_menu"):
+            self._update_device_menu()
 
     # -----------------------------------------------------------------
     def _update_map(self, note: str, text: str):
@@ -454,15 +446,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # -----------------------------------------------------------------
     def _start_listening(self) -> None:
-        want_loopback = self.capture_out.isChecked()
-        idx = self.device_combo.currentData()
+        idx = self.current_device_index()
         if idx is None:
             QtWidgets.QMessageBox.warning(self, "No device", "Select an audio device.")
             return
 
-        self.settings.setValue("device_out" if want_loopback else "device_in", idx)
+        self.settings.setValue("device_in", idx)
 
-        # If sounddevice failed to import earlier we cannot start listening
         if sd is None:
             QtWidgets.QMessageBox.warning(
                 self,
@@ -472,11 +462,8 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return
 
-        # Configure channels and WASAPI loopback if needed
-        channels = 1
-        if want_loopback and sys.platform.startswith("win"):
-            # WASAPI loopback requires extra_settings; many devices prefer 2 channels
-            channels = 2
+        channels = 1  # always standard input, no loopback/system output
+
 
         # Stop any existing worker
         if self.worker and self.worker.isRunning():
@@ -581,7 +568,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # Key selection
     def _add_mapping(self) -> None:
         """Record one or more samples and map them to a keyboard key."""
-        idx = self.device_combo.currentData()
+        idx = self.current_device_index()
         if idx is None:
             QtWidgets.QMessageBox.warning(self, "No device", "Select an audio device.")
             return
@@ -600,8 +587,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if samp_dlg.exec() != QtWidgets.QDialog.Accepted:
             return
 
-        base = samp_dlg.get_name()
-        sample_id = generate_sample_id(base, self.samples.keys())
+        base = samp_dlg.get_name().strip()
+        if not base:
+            QtWidgets.QMessageBox.warning(self, "No name", "Provide a sound name.")
+            return
+        if base in self.note_map:
+            QtWidgets.QMessageBox.warning(
+                self, "Name in use", f"Sound name '{base}' is already mapped. Pick a different name."
+            )
+            return
+
+        sample_id = base  # use exactly what the user provided, no underscore suffixing
         refs: list[np.ndarray] = []
         paths: list[str] = []
         for i, sample in enumerate(samp_dlg.samples):
@@ -615,63 +611,42 @@ class MainWindow(QtWidgets.QMainWindow):
         self._add_mapping_row(sample_id, key_name)
         self._save_mappings()
 
-    def _add_mapping_row(self, sample_id: str, key_name: str) -> None:
+
+    def _make_mapping_row_widget(self, sample_id: str, key_name: str) -> QtWidgets.QWidget:
         container = QtWidgets.QWidget()
         row = QtWidgets.QHBoxLayout(container)
         row.setContentsMargins(4, 4, 4, 4)
         lbl = QtWidgets.QLabel(sample_id)
+        lbl.setFixedWidth(150)
         key_lbl = QtWidgets.QLineEdit(key_name)
         key_lbl.setReadOnly(True)
         self.key_labels[sample_id] = key_lbl
 
-        change_btn = QtWidgets.QToolButton()
-        change_btn.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_BrowserReload))
-        change_btn.setAutoRaise(True)
-        change_btn.setToolTip("Change Key")
-        change_btn.clicked.connect(lambda _=False, s=sample_id: self._change_key(s))
+        change_btn = make_svg_toolbutton(resource_path("assets/keyboard.svg"), "Change Key", lambda _, s=sample_id: self._change_key(s))
+        edit_btn = make_svg_toolbutton(resource_path("assets/edit.svg"), "Edit Samples", lambda _, s=sample_id: self._edit_samples(s))
+        del_btn = make_svg_toolbutton(resource_path("assets/delete.svg"), "Delete Mapping", lambda _, s=sample_id: self._delete_mapping(s))
 
-        edit_btn = QtWidgets.QToolButton()
-        edit_btn.setIcon(
-            self.style().standardIcon(QtWidgets.QStyle.SP_FileDialogDetailedView)
-        )
-        edit_btn.setAutoRaise(True)
-        edit_btn.setToolTip("Edit Samples")
-        edit_btn.clicked.connect(lambda _=False, s=sample_id: self._edit_samples(s))
-
-        del_btn = QtWidgets.QToolButton()
-        del_btn.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_TrashIcon))
-        del_btn.setAutoRaise(True)
-        del_btn.setToolTip("Delete Mapping")
-        del_btn.clicked.connect(lambda _=False, s=sample_id: self._delete_mapping(s))
+        # change_btn.setIconSize(QSize(16, 16))
+        # edit_btn.setIconSize(QSize(16, 16))
+        # del_btn.setIconSize(QSize(16, 16))
 
         row.addWidget(lbl)
         row.addWidget(key_lbl)
         row.addWidget(change_btn)
         row.addWidget(edit_btn)
         row.addWidget(del_btn)
-        self.mapping_widgets[sample_id] = container
-        self._rebuild_mapping_grid()
+        return container
 
-    def _change_key(self, sample_id: str) -> None:
-        if self.worker and self.worker.isRunning():
-            self._stop_listening()
-        current = self.note_map.get(sample_id, "")
-        dlg = KeySelectDialog(self, sample_id, current)
-        if dlg.exec() == QtWidgets.QDialog.Accepted:
-            key = dlg.get_selected_key()
-            if key in self.note_map.values() and self.note_map.get(sample_id) != key:
-                QtWidgets.QMessageBox.warning(
-                    self, "Key in use", f"{key} is already mapped."
-                )
-                return
-            self.note_map[sample_id] = key
-            if sample_id in self.key_labels:
-                self.key_labels[sample_id].setText(key)
-            self._save_mappings()
+    def _add_mapping_row(self, sample_id: str, key_name: str) -> None:
+        widget = self._make_mapping_row_widget(sample_id, key_name)
+        self.mapping_widgets[sample_id] = widget
+        # If the key-mapping window is open, refresh its contents so it's in sync.
+        if hasattr(self, "keymapping_window") and self.keymapping_window:
+            self.keymapping_window.refresh()
 
     def _edit_samples(self, sample_id: str) -> None:
         """Open ``SampleDialog`` to replace or remove samples for ``sample_id``."""
-        idx = self.device_combo.currentData()
+        idx = self.current_device_index()
         if idx is None:
             QtWidgets.QMessageBox.warning(self, "No device", "Select an audio device.")
             return
@@ -699,16 +674,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sample_files[sample_id] = paths
         self._save_mappings()
 
-    def _rebuild_mapping_grid(self) -> None:
-        """Repopulate the mapping grid after additions or deletions."""
-        while self.mapping_grid.count():
-            item = self.mapping_grid.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
-        for idx, widget in enumerate(self.mapping_widgets.values()):
-            row = idx // 2
-            col = idx % 2
-            self.mapping_grid.addWidget(widget, row, col)
+    def _change_key(self, sample_id: str) -> None:
+        if self.worker and self.worker.isRunning():
+            self._stop_listening()
+        current = self.note_map.get(sample_id, "")
+        dlg = KeySelectDialog(self, sample_id, current)
+        if dlg.exec() == QtWidgets.QDialog.Accepted:
+            key = dlg.get_selected_key()
+            if key in self.note_map.values() and self.note_map.get(sample_id) != key:
+                QtWidgets.QMessageBox.warning(
+                    self, "Key in use", f"{key} is already mapped."
+                )
+                return
+            self.note_map[sample_id] = key
+            if sample_id in self.key_labels:
+                self.key_labels[sample_id].setText(key)
+            self._save_mappings()
+            if hasattr(self, "keymapping_window") and self.keymapping_window:
+                self.keymapping_window.refresh()
 
     def _delete_mapping(self, sample_id: str) -> None:
         if sample_id in self.samples:
@@ -724,8 +707,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if widget is not None:
             widget.setParent(None)
         self._save_mappings()
-        self._rebuild_mapping_grid()
 
+        if hasattr(self, "keymapping_window") and self.keymapping_window:
+            self.keymapping_window.refresh()
     # -----------------------------------------------------------------
     # Amplitude meter callback
     def _on_amplitude_changed(self, rms: float) -> None:
@@ -758,6 +742,87 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 pass
 
+    def _create_audio_input_menu(self) -> None:
+        audio_menu = self.menuBar().addMenu("Audio Input")
+        # Device submenu
+        self.device_menu = audio_menu.addMenu("Device")
+        self._update_device_menu()
+
+
+    def _update_device_menu(self) -> None:
+        """Rebuild the Device submenu showing all physical input devices."""
+        self.device_menu.clear()
+
+        if sd is None:
+            act = QtGui.QAction("sounddevice module not available", self)
+            act.setEnabled(False)
+            self.device_menu.addAction(act)
+            return
+
+        try:
+            devices = sd.query_devices()
+            hostapis = sd.query_hostapis()
+        except Exception as e:
+            act = QtGui.QAction(f"Audio enumeration failed: {e}", self)
+            act.setEnabled(False)
+            self.device_menu.addAction(act)
+            return
+
+        def is_monitor(name: str) -> bool:
+            n = name.lower()
+            return ("monitor" in n) or ("loopback" in n)
+
+        device_group = QtGui.QActionGroup(self)
+        device_group.setExclusive(True)
+
+        for idx, dev in enumerate(devices):
+            if dev.get("max_input_channels", 0) < 1:
+                continue
+            name = dev["name"]
+            if is_monitor(name):
+                continue  # skip virtual monitor/loopback devices
+            # label is just index and name
+            label = f"{idx}: {name}"
+            action = QtGui.QAction(label, self, checkable=True)
+            action.setData(idx)
+            device_group.addAction(action)
+            self.device_menu.addAction(action)
+            action.triggered.connect(lambda checked, i=idx: self._select_device(i))
+
+        # Restore preferred input device
+        preferred = self.settings.value("device_in", None)
+        if preferred is None:
+            try:
+                default_in, _ = sd.default.device
+            except Exception:
+                default_in = None
+            preferred = default_in
+
+        for action in self.device_menu.actions():
+            data = action.data()
+            if data is None:
+                continue
+            try:
+                if preferred is not None and int(data) == int(preferred):
+                    action.setChecked(True)
+            except Exception:
+                pass
+
+        # Fallback to first if nothing is selected
+        if not any(a.isChecked() for a in self.device_menu.actions()) and self.device_menu.actions():
+            self.device_menu.actions()[0].setChecked(True)
+
+    def _select_device(self, idx: int) -> None:
+        key = "device_in"
+        self.settings.setValue(key, idx)
+
+    def current_device_index(self):
+        # Return the index of the currently selected device from the menu
+        for action in getattr(self, "device_menu", []).actions():
+            if action.isChecked():
+                return action.data()
+        return None
+
     # -----------------------------------------------------------------
     def _create_menu(self) -> None:
         """
@@ -783,6 +848,8 @@ class MainWindow(QtWidgets.QMainWindow):
         settings_menu = menubar.addMenu("Settings")
         audio_action = settings_menu.addAction("Audio Parameters…")
         audio_action.triggered.connect(self._open_settings_dialog)
+
+        self._create_audio_input_menu()
 
         # Help menu providing docs and about
         help_menu = menubar.addMenu("Help")
@@ -916,6 +983,8 @@ class SampleDialog(QtWidgets.QDialog):
         name_layout.addWidget(QtWidgets.QLabel("Sound name:"))
         self.name_edit = QtWidgets.QLineEdit(name)
         self.name_edit.setReadOnly(name_readonly)
+        self.name_edit.setMaxLength(15)
+
         name_layout.addWidget(self.name_edit)
         layout.addLayout(name_layout)
 
@@ -963,7 +1032,7 @@ class SampleDialog(QtWidgets.QDialog):
         self._thread: Optional[RecordingThread] = None
         self._test_worker: Optional[SoundWorker] = None
 
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(800)
         self.setMinimumHeight(500)
 
     # ------------------------------------------------------------------
@@ -1350,6 +1419,9 @@ class SettingsDialog(QtWidgets.QDialog):
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
 
+        self.setMinimumWidth(500)
+
+
     def accept(self) -> None:
         settings = self.parent_window.settings
         settings.setValue("sample_rate", self.sample_rate_spin.value())
@@ -1362,7 +1434,8 @@ class SettingsDialog(QtWidgets.QDialog):
 
     def _calibrate_noise_floor(self) -> None:
         """Measure ambient noise and store it for the selected device."""
-        idx = self.parent_window.device_combo.currentData()
+        idx = self.parent_window.current_device_index()
+
         if idx is None:
             QtWidgets.QMessageBox.warning(self, "No device", "Select an audio device.")
             return

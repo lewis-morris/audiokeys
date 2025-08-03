@@ -5,6 +5,8 @@ import sys
 import tempfile
 from collections.abc import Iterable
 
+from PySide6 import QtCore, QtWidgets, QtGui
+from pathlib import Path
 
 def elevate_and_setup_uinput():
     user = getpass.getuser()
@@ -103,4 +105,14 @@ def generate_sample_id(base: str, existing: Iterable[str]) -> str:
     return candidate
 
 
-__all__ = ["elevate_and_setup_uinput", "resource_path", "generate_sample_id"]
+def make_svg_toolbutton(svg_path: str, tooltip: str, slot) -> QtWidgets.QToolButton:
+    btn = QtWidgets.QToolButton()
+    icon = QtGui.QIcon(str(Path(svg_path)))
+    btn.setIcon(icon)
+    btn.setIconSize(QtCore.QSize(16, 16))  # adjust as needed
+    btn.setAutoRaise(True)
+    btn.setToolTip(tooltip)
+    btn.clicked.connect(slot)
+    return btn
+
+__all__ = ["elevate_and_setup_uinput", "resource_path", "generate_sample_id", "make_svg_toolbutton"]
