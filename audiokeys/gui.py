@@ -108,10 +108,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # 2️⃣ mappings and persistent storage
         # ``note_map`` stores sample identifiers → key names
         self.note_map: dict[str, str] = {}
-        # recorded samples keyed by identifier
-        self.samples: dict[str, np.ndarray] = {}
-        # file paths for each recorded sample
-        self.sample_files: dict[str, str] = {}
+        # recorded samples keyed by identifier; each entry stores a list of
+        # reference samples for that sound
+        self.samples: dict[str, list[np.ndarray]] = {}
+        # file paths for each recorded sample list
+        self.sample_files: dict[str, list[str]] = {}
         # application data directory for storing samples
         self.data_dir = Path(user_data_dir("audiokeys", "arched.dev"))
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -155,11 +156,15 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             self.note_map = {}
             self.sample_files = {}
-        for sample_id, path in self.sample_files.items():
-            p = Path(path)
-            if p.exists():
-                sample = np.load(p)
-                self.samples[sample_id] = trim_silence(sample)
+        for sample_id, paths in self.sample_files.items():
+            loaded: list[np.ndarray] = []
+            for path in paths:
+                p = Path(path)
+                if p.exists():
+                    sample = np.load(p)
+                    loaded.append(trim_silence(sample))
+            if loaded:
+                self.samples[sample_id] = loaded
                 key = self.note_map.get(sample_id, "")
                 self._add_mapping_row(sample_id, key)
 
@@ -560,20 +565,29 @@ class MainWindow(QtWidgets.QMainWindow):
         if key_dlg.exec() != QtWidgets.QDialog.Accepted:
             return
         key_name = key_dlg.get_selected_key()
+        if key_name in self.note_map.values():
+            QtWidgets.QMessageBox.warning(
+                self, "Key in use", f"{key_name} is already mapped."
+            )
+            return
 
         samp_dlg = SampleDialog(self, int(idx))
         if samp_dlg.exec() != QtWidgets.QDialog.Accepted:
             return
 
         base = samp_dlg.get_name()
-        for sample in samp_dlg.samples:
-            sample_id = generate_sample_id(base, self.samples.keys())
-            self.samples[sample_id] = sample
-            self.note_map[sample_id] = key_name
-            path = self.data_dir / f"{sample_id}.npy"
+        sample_id = generate_sample_id(base, self.samples.keys())
+        refs: list[np.ndarray] = []
+        paths: list[str] = []
+        for i, sample in enumerate(samp_dlg.samples):
+            refs.append(sample)
+            path = self.data_dir / f"{sample_id}_{i}.npy"
             np.save(path, sample)
-            self.sample_files[sample_id] = str(path)
-            self._add_mapping_row(sample_id, key_name)
+            paths.append(str(path))
+        self.samples[sample_id] = refs
+        self.note_map[sample_id] = key_name
+        self.sample_files[sample_id] = paths
+        self._add_mapping_row(sample_id, key_name)
         self._save_mappings()
 
     def _add_mapping_row(self, sample_id: str, key_name: str) -> None:
@@ -620,6 +634,11 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg = KeySelectDialog(self, sample_id, current)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
             key = dlg.get_selected_key()
+            if key in self.note_map.values() and self.note_map.get(sample_id) != key:
+                QtWidgets.QMessageBox.warning(
+                    self, "Key in use", f"{key} is already mapped."
+                )
+                return
             self.note_map[sample_id] = key
             if sample_id in self.key_labels:
                 self.key_labels[sample_id].setText(key)
@@ -632,30 +651,27 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "No device", "Select an audio device.")
             return
 
-        key = self.note_map.get(sample_id, "")
-        existing = self.samples.get(sample_id)
+        existing = self.samples.get(sample_id, [])
         dlg = SampleDialog(
             self,
             int(idx),
             name=sample_id,
-            samples=[existing] if existing is not None else None,
+            samples=existing,
             name_readonly=True,
         )
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
 
-        # Remove old mapping
-        self._delete_mapping(sample_id)
+        for path in self.sample_files.get(sample_id, []):
+            Path(path).unlink(missing_ok=True)
 
-        base = dlg.get_name()
-        for sample in dlg.samples:
-            new_id = generate_sample_id(base, self.samples.keys())
-            self.samples[new_id] = sample
-            self.note_map[new_id] = key
-            path = self.data_dir / f"{new_id}.npy"
+        self.samples[sample_id] = dlg.samples[:]
+        paths: list[str] = []
+        for i, sample in enumerate(dlg.samples):
+            path = self.data_dir / f"{sample_id}_{i}.npy"
             np.save(path, sample)
-            self.sample_files[new_id] = str(path)
-            self._add_mapping_row(new_id, key)
+            paths.append(str(path))
+        self.sample_files[sample_id] = paths
         self._save_mappings()
 
     def _rebuild_mapping_grid(self) -> None:
@@ -676,8 +692,8 @@ class MainWindow(QtWidgets.QMainWindow):
             del self.note_map[sample_id]
         if sample_id in self.key_labels:
             del self.key_labels[sample_id]
-        path = self.sample_files.pop(sample_id, None)
-        if path:
+        paths = self.sample_files.pop(sample_id, [])
+        for path in paths:
             Path(path).unlink(missing_ok=True)
         widget = self.mapping_widgets.pop(sample_id, None)
         if widget is not None:

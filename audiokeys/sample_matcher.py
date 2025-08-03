@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping, Optional
+from typing import Iterable, Mapping, Optional, Sequence
 
 import numpy as np
 import threading
@@ -24,18 +24,35 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 def match_sample(
     segment: np.ndarray,
-    samples: Mapping[str, np.ndarray],
+    samples: Mapping[str, Sequence[np.ndarray] | np.ndarray],
     *,
     threshold: float = 0.8,
 ) -> Optional[str]:
-    """Return the key whose stored sample best matches ``segment``."""
+    """Return the mapping key with the highest similarity to ``segment``.
+
+    Args:
+        segment: Captured audio segment.
+        samples: Mapping from sample identifier to one or more reference
+            samples.
+        threshold: Minimum similarity score required to return a match.
+
+    Returns:
+        The identifier of the best-matching sample or ``None`` if no match
+        exceeds ``threshold``.
+    """
     best_key: Optional[str] = None
     best_score: float = 0.0
-    for key, ref in samples.items():
-        score = cosine_similarity(segment, ref)
-        if score > best_score:
-            best_score = score
-            best_key = key
+    for key, refs in samples.items():
+        # Normalise refs to an iterable of arrays
+        if isinstance(refs, np.ndarray):
+            iterable: Iterable[np.ndarray] = (refs,)
+        else:
+            iterable = refs
+        for ref in iterable:
+            score = cosine_similarity(segment, ref)
+            if score > best_score:
+                best_score = score
+                best_key = key
     if best_key is not None and best_score >= threshold:
         return best_key
     return None
