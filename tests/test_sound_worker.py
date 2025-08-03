@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import numpy as np
-from collections import deque
 
 import pytest
 import sys
 import types
 
 sys.modules.setdefault("sounddevice", types.SimpleNamespace())
+sys.modules.setdefault("utils", types.SimpleNamespace(elevate_and_setup_uinput=lambda: None))
 
 
 class _DummySignal:
@@ -75,11 +75,9 @@ def test_match_threshold_respected(monkeypatch: pytest.MonkeyPatch) -> None:
         match_threshold=0.5,
         min_press_interval=0.0,
     )
-    worker.buffer = deque([sample])
-    worker._process_segment()
+    worker._process_segment(sample)
     assert worker.sender.pressed == ["x"]
 
     worker.match_threshold = 1.1
-    worker.buffer = deque([sample])
-    worker._process_segment()
+    worker._process_segment(sample)
     assert worker.sender.pressed == ["x"]

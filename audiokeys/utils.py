@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from PySide6 import QtCore, QtWidgets, QtGui
 from pathlib import Path
 
+
 def elevate_and_setup_uinput():
     user = getpass.getuser()
     script = f"""#!/bin/bash
@@ -115,4 +116,10 @@ def make_svg_toolbutton(svg_path: str, tooltip: str, slot) -> QtWidgets.QToolBut
     btn.clicked.connect(slot)
     return btn
 
-__all__ = ["elevate_and_setup_uinput", "resource_path", "generate_sample_id", "make_svg_toolbutton"]
+
+__all__ = [
+    "elevate_and_setup_uinput",
+    "resource_path",
+    "generate_sample_id",
+    "make_svg_toolbutton",
+]

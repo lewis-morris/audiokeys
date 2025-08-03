@@ -3,6 +3,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+
+import types
+
+_dummy_mod = types.ModuleType("dummy")
+_dummy_mod.QToolButton = type("QToolButton", (), {})
+_dummy_mod.QIcon = lambda *args, **kwargs: None
+_dummy_mod.QSize = lambda *args, **kwargs: None
+pkg = types.ModuleType("PySide6")
+pkg.QtCore = _dummy_mod
+pkg.QtWidgets = _dummy_mod
+pkg.QtGui = _dummy_mod
+sys.modules["PySide6"] = pkg
+sys.modules["PySide6.QtCore"] = _dummy_mod
+sys.modules["PySide6.QtWidgets"] = _dummy_mod
+sys.modules["PySide6.QtGui"] = _dummy_mod
+
 from audiokeys.utils import generate_sample_id
 
 
