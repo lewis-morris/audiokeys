@@ -33,12 +33,21 @@ def _mfcc_mean(samples: np.ndarray, sample_rate: int) -> np.ndarray:
     return mfcc.mean(axis=1)
 
 
-def _dtw_mfcc_similarity(a: np.ndarray, b: np.ndarray, sample_rate: int) -> float:
-    """Return similarity based on DTW distance between MFCC sequences."""
+def _dtw_mfcc_similarity(mfcc_a: np.ndarray, mfcc_b: np.ndarray) -> float:
+    """Return similarity between two MFCC matrices using DTW.
 
-    mfcc_a = librosa.feature.mfcc(y=a, sr=sample_rate, n_mfcc=13)
-    mfcc_b = librosa.feature.mfcc(y=b, sr=sample_rate, n_mfcc=13)
-    dist, _ = librosa.sequence.dtw(mfcc_a, mfcc_b, metric="cosine")
+    Args:
+        mfcc_a: MFCC matrix of the segment being compared.
+        mfcc_b: MFCC matrix of the reference sample.
+
+    Returns:
+        Cosine-based similarity score in the range ``0``‑``1``.
+    """
+
+    # ``librosa.sequence.dtw`` returns both the cost matrix and the alignment
+    # path by default.  ``backtrack=False`` avoids computing the path which we
+    # don't use, significantly reducing CPU and memory usage for long signals.
+    dist = librosa.sequence.dtw(mfcc_a, mfcc_b, metric="cosine", backtrack=False)
     final = float(dist[-1, -1])
     return 1.0 / (1.0 + final)
 
@@ -73,7 +82,10 @@ def match_sample(
     if method == "mfcc":
         segment_feat = _mfcc_mean(segment, sample_rate)
     elif method == "dtw":
-        segment_feat = segment  # placeholder; DTW computes internally
+        # Pre-compute MFCCs for the segment once.  Previously these were
+        # calculated for every reference sample which caused significant
+        # slowdown in the GUI when using DTW.
+        segment_feat = librosa.feature.mfcc(y=segment, sr=sample_rate, n_mfcc=13)
     else:
         segment_feat = segment
     for key, refs in samples.items():
@@ -88,7 +100,8 @@ def match_sample(
                 ref_feat = _mfcc_mean(ref, sample_rate)
                 score = cosine_similarity(segment_feat, ref_feat)
             elif method == "dtw":
-                score = _dtw_mfcc_similarity(segment_feat, ref, sample_rate)
+                ref_feat = librosa.feature.mfcc(y=ref, sr=sample_rate, n_mfcc=13)
+                score = _dtw_mfcc_similarity(segment_feat, ref_feat)
             else:  # pragma: no cover - validated by type
                 raise ValueError(f"Unknown method: {method}")
             if score > best_score:
