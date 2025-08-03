@@ -31,7 +31,7 @@ except ImportError:
 
 # ─── Qt ────────────────────────────────────────────────────────────────────────
 from PySide6 import QtCore, QtGui, QtWidgets
-from PySide6.QtCore import QPoint, QSettings, QSize
+from PySide6.QtCore import QPoint, QSettings
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QToolTip
 
@@ -61,15 +61,19 @@ between launches without editing the ``constants.py`` file.
 try:
     from audiokeys import constants  # type: ignore
     from audiokeys.sound_worker import SoundWorker  # type: ignore
-    from audiokeys.sample_matcher import record_until_silence  # type: ignore
-    from audiokeys.utils import generate_sample_id, make_svg_toolbutton, resource_path  # type: ignore
+
+    # ``record_until_silence`` is no longer used directly; recording logic lives
+    # in ``RecordingThread``.
+    from audiokeys.utils import make_svg_toolbutton, resource_path  # type: ignore
     from audiokeys.noise_gate import calculate_noise_floor, trim_silence  # type: ignore
 except Exception:
     # Local fallback imports – only works when run from the project root
     import constants  # type: ignore
     from sound_worker import SoundWorker  # type: ignore
-    from sample_matcher import record_until_silence  # type: ignore
-    from utils import generate_sample_id, resource_path  # type: ignore
+
+    # ``record_until_silence`` is no longer used directly; recording logic lives
+    # in ``RecordingThread``.
+    from utils import resource_path  # type: ignore
     from noise_gate import calculate_noise_floor, trim_silence  # type: ignore
 
 # ─── Note ──────────────────────────────────────────────────────────────────
@@ -78,12 +82,6 @@ except Exception:
 # other platforms we fall back to pynput.  Any unused or Linux‑specific
 # stream routing functions have been removed to simplify the code.
 
-# Unused stream helpers (list_playback_streams and ensure_monitor_for_stream)
-# were removed from this version.  If future work requires enumerating
-# applications playing sound or creating monitor sinks, those should be
-# implemented in a separate module and imported conditionally.
-
-list_playback_streams = None  # placeholder for removed functionality
 
 # -----------------------------------------------------------------------------
 # NOTE_NAMES and DEFAULT_NOTE_MAP are imported from constants.py.  Other
@@ -110,6 +108,9 @@ class KeyMappingWindow(QtWidgets.QDialog):
         top_row.addWidget(add_btn)
         top_row.addStretch()
         layout.addLayout(top_row)
+
+        info_lbl = QtWidgets.QLabel("Manage your recorded samples and key bindings.")
+        layout.addWidget(info_lbl)
 
         self.scroll = QtWidgets.QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -306,11 +307,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.test_checkbox.setChecked(self.test_mode)
         self.test_checkbox.toggled.connect(self._on_test_mode_toggled)
         ctrl_layout.addWidget(self.test_checkbox)
-        test_info_btn = make_svg_toolbutton(resource_path("assets/info.svg"), "Test Listening Info", lambda: QToolTip.showText(
+        test_info_btn = make_svg_toolbutton(
+            resource_path("assets/info.svg"),
+            "Test Listening Info",
+            lambda: QToolTip.showText(
                 test_info_btn.mapToGlobal(QPoint(0, test_info_btn.height())),
                 test_info_btn.toolTip(),
                 test_info_btn,
-            ))
+            ),
+        )
 
         test_info_btn.setAutoRaise(True)
         test_info_btn.setToolTip(
@@ -328,7 +333,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
         self.resize(700, 800)
         self.setFixedSize(700, 800)
-
 
     def _open_keymapping_window(self):
         if not getattr(self, "keymapping_window", None):
@@ -367,6 +371,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.device_combo.blockSignals(False)
             return
 
+        hostapis = []
         try:
             devices = sd.query_devices()
             hostapis = sd.query_hostapis()
@@ -388,10 +393,14 @@ class MainWindow(QtWidgets.QMainWindow):
                     if ("wasapi" in hostapi_name.lower()) and dev.get(
                         "max_output_channels", 0
                     ) >= 1:
-                        self.device_combo.addItem(label_for(idx, name, hostapi_name), idx)
+                        self.device_combo.addItem(
+                            label_for(idx, name, hostapi_name), idx
+                        )
                 else:
                     if is_monitor(name) and dev.get("max_input_channels", 0) >= 1:
-                        self.device_combo.addItem(label_for(idx, name, hostapi_name), idx)
+                        self.device_combo.addItem(
+                            label_for(idx, name, hostapi_name), idx
+                        )
 
         key = "device_out" if want_loopback else "device_in"
         preferred = self.settings.value(key, None)
@@ -419,7 +428,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.device_combo.addItem("No system output devices found", -1)
 
         self.device_combo.blockSignals(False)
-
 
     def _populate_devices(self) -> None:
         """Rebuild the audio input menu."""
@@ -463,7 +471,6 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         channels = 1  # always standard input, no loopback/system output
-
 
         # Stop any existing worker
         if self.worker and self.worker.isRunning():
@@ -541,8 +548,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # -----------------------------------------------------------------
     # Worker callbacks
-    def _on_key_detected(self, key: str) -> None:
-        self._append_log(f"Detected {key}")
+    def _on_key_detected(self, key: str, score: float) -> None:
+        """Handle a detected key press from the worker thread."""
+
+        self._append_log(f"Detected {key} ({score:.2f})")
         if key in self.key_labels:
             lbl = self.key_labels[key]
             lbl.setStyleSheet("background-color: yellow")
@@ -593,7 +602,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if base in self.note_map:
             QtWidgets.QMessageBox.warning(
-                self, "Name in use", f"Sound name '{base}' is already mapped. Pick a different name."
+                self,
+                "Name in use",
+                f"Sound name '{base}' is already mapped. Pick a different name.",
             )
             return
 
@@ -611,8 +622,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._add_mapping_row(sample_id, key_name)
         self._save_mappings()
 
-
-    def _make_mapping_row_widget(self, sample_id: str, key_name: str) -> QtWidgets.QWidget:
+    def _make_mapping_row_widget(
+        self, sample_id: str, key_name: str
+    ) -> QtWidgets.QWidget:
         container = QtWidgets.QWidget()
         row = QtWidgets.QHBoxLayout(container)
         row.setContentsMargins(4, 4, 4, 4)
@@ -622,9 +634,21 @@ class MainWindow(QtWidgets.QMainWindow):
         key_lbl.setReadOnly(True)
         self.key_labels[sample_id] = key_lbl
 
-        change_btn = make_svg_toolbutton(resource_path("assets/keyboard.svg"), "Change Key", lambda _, s=sample_id: self._change_key(s))
-        edit_btn = make_svg_toolbutton(resource_path("assets/edit.svg"), "Edit Samples", lambda _, s=sample_id: self._edit_samples(s))
-        del_btn = make_svg_toolbutton(resource_path("assets/delete.svg"), "Delete Mapping", lambda _, s=sample_id: self._delete_mapping(s))
+        change_btn = make_svg_toolbutton(
+            resource_path("assets/keyboard.svg"),
+            "Change Key",
+            lambda _, s=sample_id: self._change_key(s),
+        )
+        edit_btn = make_svg_toolbutton(
+            resource_path("assets/edit.svg"),
+            "Edit Samples",
+            lambda _, s=sample_id: self._edit_samples(s),
+        )
+        del_btn = make_svg_toolbutton(
+            resource_path("assets/delete.svg"),
+            "Delete Mapping",
+            lambda _, s=sample_id: self._delete_mapping(s),
+        )
 
         # change_btn.setIconSize(QSize(16, 16))
         # edit_btn.setIconSize(QSize(16, 16))
@@ -710,6 +734,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if hasattr(self, "keymapping_window") and self.keymapping_window:
             self.keymapping_window.refresh()
+
     # -----------------------------------------------------------------
     # Amplitude meter callback
     def _on_amplitude_changed(self, rms: float) -> None:
@@ -748,7 +773,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.device_menu = audio_menu.addMenu("Device")
         self._update_device_menu()
 
-
     def _update_device_menu(self) -> None:
         """Rebuild the Device submenu showing all physical input devices."""
         self.device_menu.clear()
@@ -761,7 +785,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         try:
             devices = sd.query_devices()
-            hostapis = sd.query_hostapis()
         except Exception as e:
             act = QtGui.QAction(f"Audio enumeration failed: {e}", self)
             act.setEnabled(False)
@@ -809,7 +832,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
 
         # Fallback to first if nothing is selected
-        if not any(a.isChecked() for a in self.device_menu.actions()) and self.device_menu.actions():
+        if (
+            not any(a.isChecked() for a in self.device_menu.actions())
+            and self.device_menu.actions()
+        ):
             self.device_menu.actions()[0].setChecked(True)
 
     def _select_device(self, idx: int) -> None:
@@ -943,17 +969,50 @@ def run_gui():
 
 
 class RecordingThread(QtCore.QThread):
-    """Background thread that records audio using ``record_until_silence``."""
+    """Background thread that records audio while emitting amplitude updates."""
 
     recorded = QtCore.Signal(np.ndarray)
+    amplitude = QtCore.Signal(float)
 
     def __init__(self, device_index: int) -> None:
         super().__init__()
         self.device_index = device_index
         self._stop = threading.Event()
 
-    def run(self) -> None:  # noqa: D401 - simple delegator
-        sample = record_until_silence(self.device_index, stop_event=self._stop)
+    def run(self) -> None:  # noqa: D401 - custom loop for amplitude updates
+        """Capture audio until silence and emit RMS amplitude during recording."""
+
+        import sounddevice as sd
+
+        frames: list[np.ndarray] = []
+        silent = 0
+        required = int(constants.NOISE_GATE_CALIBRATION_TIME * constants.SAMPLE_RATE)
+        with sd.InputStream(
+            device=self.device_index,
+            channels=1,
+            samplerate=constants.SAMPLE_RATE,
+            blocksize=constants.HOP_SIZE,
+            dtype="float32",
+        ) as stream:
+            while not self._stop.is_set():
+                data, _ = stream.read(constants.HOP_SIZE)
+                block = data.reshape(-1)
+                frames.append(block)
+                rms = float(np.sqrt(np.mean(block**2)))
+                self.amplitude.emit(rms)
+                if rms < 0.01:
+                    silent += constants.HOP_SIZE
+                    if (
+                        silent >= required
+                        and sum(len(x) for x in frames) > constants.HOP_SIZE
+                    ):
+                        break
+                else:
+                    silent = 0
+        if frames:
+            sample = np.concatenate(frames)
+        else:
+            sample = np.array([], dtype=np.float32)
         self.recorded.emit(sample)
 
     def stop(self) -> None:
@@ -988,6 +1047,9 @@ class SampleDialog(QtWidgets.QDialog):
         name_layout.addWidget(self.name_edit)
         layout.addLayout(name_layout)
 
+        info_lbl = QtWidgets.QLabel("Record 5–10 samples for best results.")
+        layout.addWidget(info_lbl)
+
         self.list_widget = QtWidgets.QListWidget()
         for idx in range(len(self.samples)):
             self.list_widget.addItem(f"Sample {idx + 1}")
@@ -1017,6 +1079,7 @@ class SampleDialog(QtWidgets.QDialog):
         self.level_bar.setRange(0, 100)
         layout.addWidget(self.level_bar)
 
+        # Label that displays detection result and confidence
         self.detect_lbl = QtWidgets.QLabel("")
         layout.addWidget(self.detect_lbl)
 
@@ -1043,6 +1106,7 @@ class SampleDialog(QtWidgets.QDialog):
         self.record_btn.setText("Stop")
         self._thread = RecordingThread(self.device_index)
         self._thread.recorded.connect(self._on_recorded)
+        self._thread.amplitude.connect(self._on_record_amplitude)
         self._thread.start()
 
     def _on_recorded(self, sample: np.ndarray) -> None:
@@ -1162,13 +1226,19 @@ class SampleDialog(QtWidgets.QDialog):
             self.detect_lbl.clear()
             self.level_bar.setValue(0)
 
-    def _on_test_detected(self, key: str) -> None:
-        """Display the detected sample identifier."""
+    def _on_test_detected(self, key: str, score: float) -> None:
+        """Display the detected sample identifier and confidence score."""
 
-        self.detect_lbl.setText(f"Detected {key}")
+        self.detect_lbl.setText(f"Detected {key} ({score:.2f})")
 
     def _on_test_amplitude(self, rms: float) -> None:
-        """Update the level bar using the RMS amplitude."""
+        """Update the level bar using the RMS amplitude during testing."""
+
+        level = min(int(rms * 300.0), 100)
+        self.level_bar.setValue(level)
+
+    def _on_record_amplitude(self, rms: float) -> None:
+        """Update the level bar while recording samples."""
 
         level = min(int(rms * 300.0), 100)
         self.level_bar.setValue(level)
@@ -1293,6 +1363,8 @@ class SettingsDialog(QtWidgets.QDialog):
             self.setWindowIcon(parent.windowIcon())
 
         layout = QtWidgets.QVBoxLayout(self)
+        desc = QtWidgets.QLabel("Tweak audio parameters; defaults fit most cases.")
+        layout.addWidget(desc)
         form = QtWidgets.QFormLayout()
         layout.addLayout(form)
 
@@ -1420,7 +1492,6 @@ class SettingsDialog(QtWidgets.QDialog):
         layout.addWidget(self.buttons)
 
         self.setMinimumWidth(500)
-
 
     def accept(self) -> None:
         settings = self.parent_window.settings

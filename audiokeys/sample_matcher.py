@@ -59,8 +59,8 @@ def match_sample(
     threshold: float = 0.8,
     method: DetectionMethod = "waveform",
     sample_rate: int = 44_100,
-) -> Optional[str]:
-    """Return the mapping key with the highest similarity to ``segment``.
+) -> tuple[Optional[str], float]:
+    """Return the best-matching key and its similarity score.
 
     Args:
         segment: Captured audio segment.
@@ -73,9 +73,11 @@ def match_sample(
         sample_rate: Sample rate of ``segment`` and references.
 
     Returns:
-        The identifier of the best-matching sample or ``None`` if no match
-        exceeds ``threshold``.
+        Tuple of ``(key, score)`` where ``key`` is the identifier of the
+        best-matching sample or ``None`` if no match exceeds ``threshold`` and
+        ``score`` is the similarity score of that best match.
     """
+
     best_key: Optional[str] = None
     best_score: float = 0.0
     # Pre-compute segment features depending on the method
@@ -108,8 +110,8 @@ def match_sample(
                 best_score = score
                 best_key = key
     if best_key is not None and best_score >= threshold:
-        return best_key
-    return None
+        return best_key, best_score
+    return None, best_score
 
 
 def record_until_silence(

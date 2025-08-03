@@ -25,15 +25,17 @@ def test_match_sample_returns_best_key() -> None:
     ref_a = np.array([0.1, 0.2, 0.3])
     ref_b = np.array([1.0, 0.0, -1.0])
     segment = ref_b + np.random.normal(0, 0.01, size=3)
-    key = match_sample(segment, {"a": ref_a, "b": ref_b}, threshold=0.5)
+    key, score = match_sample(segment, {"a": ref_a, "b": ref_b}, threshold=0.5)
     assert key == "b"
+    assert 0.0 <= score <= 1.0
 
 
 def test_match_sample_threshold_none() -> None:
     ref = np.array([1.0, 0.0, -1.0])
     segment = np.array([0.1, 0.1, 0.1])
-    key = match_sample(segment, {"r": ref}, threshold=0.9)
+    key, score = match_sample(segment, {"r": ref}, threshold=0.9)
     assert key is None
+    assert score >= 0.0
 
 
 def test_match_sample_handles_multiple_refs() -> None:
@@ -41,7 +43,7 @@ def test_match_sample_handles_multiple_refs() -> None:
     ref1 = np.array([1.0, 0.0, 0.0])
     ref2 = np.array([0.0, 1.0, 0.0])
     segment = ref2 + np.random.normal(0, 0.01, size=3)
-    key = match_sample(segment, {"x": [ref1, ref2]}, threshold=0.5)
+    key, _ = match_sample(segment, {"x": [ref1, ref2]}, threshold=0.5)
     assert key == "x"
 
 
@@ -55,7 +57,7 @@ def test_match_sample_mfcc() -> None:
     ref_a = _sine(440, sr)
     ref_b = _sine(660, sr)
     segment = _sine(660, sr)
-    key = match_sample(
+    key, _ = match_sample(
         segment,
         {"a": [ref_a], "b": [ref_b]},
         threshold=0.5,
@@ -70,7 +72,7 @@ def test_match_sample_dtw() -> None:
     ref_a = _sine(440, sr)
     ref_b = _sine(660, sr)
     segment = _sine(440, sr)
-    key = match_sample(
+    key, _ = match_sample(
         segment,
         {"a": [ref_a], "b": [ref_b]},
         threshold=0.5,

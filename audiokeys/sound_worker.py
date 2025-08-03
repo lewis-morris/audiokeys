@@ -30,7 +30,8 @@ from .noise_gate import AdaptiveNoiseGate
 class SoundWorker(QtCore.QThread):
     """Capture audio and match blocks against stored samples."""
 
-    keyDetected = QtCore.Signal(str)
+    # Emit detected key and similarity score
+    keyDetected = QtCore.Signal(str, float)
     amplitudeChanged = QtCore.Signal(float)
 
     def __init__(
@@ -88,6 +89,10 @@ class SoundWorker(QtCore.QThread):
         self._stop_event = threading.Event()
         self.stream: Optional[sd.InputStream] = None
         self.buffer: deque[np.ndarray] = deque()
+        # Queue of captured segments awaiting matching.  Heavy matching
+        # operations are processed outside the audio callback to avoid GUI
+        # hangs, especially when using MFCC or DTW methods.
+        self.segments: deque[np.ndarray] = deque()
         self.noise_gate = AdaptiveNoiseGate(
             duration=noise_gate_duration,
             margin=noise_gate_margin,
@@ -100,12 +105,10 @@ class SoundWorker(QtCore.QThread):
         self.hp_zi = sosfilt_zi(self.hp_sos)
 
     # --------------------------------------------------------------
-    def _process_segment(self) -> None:
-        if not self.buffer:
-            return
-        segment = np.concatenate(list(self.buffer))
-        self.buffer.clear()
-        key = match_sample(
+    def _process_segment(self, segment: np.ndarray) -> None:
+        """Match a captured ``segment`` against reference samples."""
+
+        key, score = match_sample(
             segment,
             self.samples,
             threshold=self.match_threshold,
@@ -116,7 +119,7 @@ class SoundWorker(QtCore.QThread):
             now = time.time()
             if now - self._last_emit >= self.min_press_interval:
                 self.sender.press(key)
-                self.keyDetected.emit(key)
+                self.keyDetected.emit(key, score)
                 self.sender.release(key)
                 self._last_emit = now
 
@@ -139,7 +142,9 @@ class SoundWorker(QtCore.QThread):
 
             if self.noise_gate.is_silent(samples):
                 if self.buffer:
-                    self._process_segment()
+                    segment = np.concatenate(list(self.buffer))
+                    self.segments.append(segment)
+                    self.buffer.clear()
                 return
 
             self.buffer.append(samples)
@@ -159,7 +164,10 @@ class SoundWorker(QtCore.QThread):
             )
             self.stream.start()
             while not self._stop_event.is_set():
-                sd.sleep(100)
+                if self.segments:
+                    segment = self.segments.popleft()
+                    self._process_segment(segment)
+                sd.sleep(50)
             if self.stream is not None:
                 self.stream.stop()
                 self.stream.close()
