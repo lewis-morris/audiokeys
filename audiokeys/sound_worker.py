@@ -20,6 +20,7 @@ from .constants import (
     HP_FILTER_CUTOFF,
     NOISE_GATE_CALIBRATION_TIME,
     NOISE_GATE_MARGIN,
+    MATCH_THRESHOLD,
     SAMPLE_RATE,
 )
 from .sample_matcher import match_sample
@@ -47,7 +48,7 @@ class SoundWorker(QtCore.QThread):
         noise_gate_duration: float = NOISE_GATE_CALIBRATION_TIME,
         noise_gate_margin: float = NOISE_GATE_MARGIN,
         preset_noise_floor: Optional[float] = None,
-        match_threshold: float = 0.8,
+        match_threshold: float = MATCH_THRESHOLD,
         send_enabled: bool = True,
         min_press_interval: float = 0.25,
     ) -> None:

@@ -506,6 +506,10 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             preset_floor = None
 
+        match_thresh = float(
+            self.settings.value("match_threshold", constants.MATCH_THRESHOLD)
+        )
+
         self.worker = SoundWorker(
             idx,
             self.samples,
@@ -518,7 +522,7 @@ class MainWindow(QtWidgets.QMainWindow):
             noise_gate_duration=gate_dur,
             noise_gate_margin=gate_margin,
             preset_noise_floor=preset_floor,
-            match_threshold=0.8,
+            match_threshold=match_thresh,
             send_enabled=not getattr(self, "test_mode", False),
         )
         self.worker.keyDetected.connect(self._on_key_detected)
@@ -930,7 +934,19 @@ class SampleDialog(QtWidgets.QDialog):
         self.delete_btn.clicked.connect(self._delete_sample)
         btn_layout.addWidget(self.delete_btn)
 
+        self.test_btn = QtWidgets.QPushButton("Test Detection")
+        self.test_btn.setCheckable(True)
+        self.test_btn.toggled.connect(self._toggle_test)
+        btn_layout.addWidget(self.test_btn)
+
         layout.addLayout(btn_layout)
+
+        self.level_bar = QtWidgets.QProgressBar()
+        self.level_bar.setRange(0, 100)
+        layout.addWidget(self.level_bar)
+
+        self.detect_lbl = QtWidgets.QLabel("")
+        layout.addWidget(self.detect_lbl)
 
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
@@ -942,6 +958,7 @@ class SampleDialog(QtWidgets.QDialog):
         layout.addWidget(buttons)
 
         self._thread: Optional[RecordingThread] = None
+        self._test_worker: Optional[SoundWorker] = None
 
         self.setMinimumWidth(500)
         self.setMinimumHeight(500)
@@ -986,10 +1003,95 @@ class SampleDialog(QtWidgets.QDialog):
         self.samples.pop(idx)
         self.list_widget.takeItem(idx)
 
+    def _toggle_test(self, checked: bool) -> None:
+        """Start or stop live matching against the recorded samples."""
+
+        if checked:
+            if not self.samples:
+                QtWidgets.QMessageBox.warning(
+                    self, "No samples", "Record samples before testing."
+                )
+                self.test_btn.setChecked(False)
+                return
+
+            parent = self.parent()
+            settings = parent.settings if hasattr(parent, "settings") else None
+            sample_rate = int(
+                settings.value("sample_rate", constants.SAMPLE_RATE)
+            ) if settings else constants.SAMPLE_RATE
+            buffer_size = int(
+                settings.value("buffer_size", constants.BUFFER_SIZE)
+            ) if settings else constants.BUFFER_SIZE
+            gate_margin = float(
+                settings.value("noise_gate_margin", constants.NOISE_GATE_MARGIN)
+            ) if settings else constants.NOISE_GATE_MARGIN
+            hp_cutoff = float(
+                settings.value("hp_cutoff", constants.HP_FILTER_CUTOFF)
+            ) if settings else constants.HP_FILTER_CUTOFF
+            match_thresh = float(
+                settings.value("match_threshold", constants.MATCH_THRESHOLD)
+            ) if settings else constants.MATCH_THRESHOLD
+
+            noise_floor_key = f"noise_floor_{self.device_index}"
+            preset_floor = None
+            if settings:
+                nf = settings.value(noise_floor_key, None)
+                try:
+                    if nf is not None:
+                        preset_floor = float(nf)
+                except Exception:
+                    preset_floor = None
+
+            sample_id = self.name_edit.text() or "sample"
+            mapping = {sample_id: self.samples}
+            note_map = {sample_id: ""}
+
+            self._test_worker = SoundWorker(
+                self.device_index,
+                mapping,
+                note_map,
+                channels=1,
+                sample_rate=sample_rate,
+                buffer_size=buffer_size,
+                hop_size=constants.HOP_SIZE,
+                hp_cutoff=hp_cutoff,
+                noise_gate_duration=constants.NOISE_GATE_CALIBRATION_TIME,
+                noise_gate_margin=gate_margin,
+                preset_noise_floor=preset_floor,
+                match_threshold=match_thresh,
+                send_enabled=False,
+            )
+            self._test_worker.keyDetected.connect(self._on_test_detected)
+            self._test_worker.amplitudeChanged.connect(self._on_test_amplitude)
+            self._test_worker.start()
+            self.test_btn.setText("Stop Test")
+        else:
+            if self._test_worker:
+                self._test_worker.stop()
+                self._test_worker = None
+            self.test_btn.setText("Test Detection")
+            self.detect_lbl.clear()
+            self.level_bar.setValue(0)
+
+    def _on_test_detected(self, key: str) -> None:
+        """Display the detected sample identifier."""
+
+        self.detect_lbl.setText(f"Detected {key}")
+
+    def _on_test_amplitude(self, rms: float) -> None:
+        """Update the level bar using the RMS amplitude."""
+
+        level = min(int(rms * 300.0), 100)
+        self.level_bar.setValue(level)
+
     def reject(self) -> None:  # noqa: D401 - close dialog
         if self._thread and self._thread.isRunning():
             self._thread.stop()
             self._thread.wait()
+        if self._test_worker and self._test_worker.isRunning():
+            self._test_worker.stop()
+            self._test_worker.wait(2000)
+            self._test_worker = None
         super().reject()
 
     def accept(self) -> None:
@@ -1001,6 +1103,10 @@ class SampleDialog(QtWidgets.QDialog):
         if not self.name_edit.text().strip():
             QtWidgets.QMessageBox.warning(self, "No name", "Provide a sound name.")
             return
+        if self._test_worker and self._test_worker.isRunning():
+            self._test_worker.stop()
+            self._test_worker.wait(2000)
+            self._test_worker = None
         super().accept()
 
     def get_name(self) -> str:
@@ -1163,6 +1269,23 @@ class SettingsDialog(QtWidgets.QDialog):
             ),
         )
 
+        # Match threshold
+        default_match = float(
+            settings.value("match_threshold", constants.MATCH_THRESHOLD)
+        )
+        self.match_thresh_spin = QtWidgets.QDoubleSpinBox()
+        self.match_thresh_spin.setRange(0.0, 1.0)
+        self.match_thresh_spin.setSingleStep(0.05)
+        self.match_thresh_spin.setDecimals(2)
+        self.match_thresh_spin.setValue(default_match)
+        form.addRow(
+            "Match threshold",
+            make_field(
+                self.match_thresh_spin,
+                "Minimum cosine similarity required for detection; lower values increase sensitivity.",
+            ),
+        )
+
         # High-pass filter cutoff
         default_hp_cutoff = float(
             settings.value("hp_cutoff", constants.HP_FILTER_CUTOFF)
@@ -1198,6 +1321,7 @@ class SettingsDialog(QtWidgets.QDialog):
         settings.setValue("sample_rate", self.sample_rate_spin.value())
         settings.setValue("buffer_size", self.buffer_size_spin.value())
         settings.setValue("noise_gate_margin", self.gate_margin_spin.value())
+        settings.setValue("match_threshold", self.match_thresh_spin.value())
         settings.setValue("hp_cutoff", self.hp_cutoff_spin.value())
         super().accept()
 

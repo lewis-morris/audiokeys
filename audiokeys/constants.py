@@ -44,6 +44,13 @@ NOISE_GATE_MARGIN: float = 1.5
 # 80 Hz are appropriate for most scenarios.
 HP_FILTER_CUTOFF: float = 60.0
 
+# ─── Sample matching defaults ────────────────────────────────────────────
+
+# Minimum cosine similarity required for a segment to be considered a
+# match to a reference sample. Lower values increase sensitivity but may
+# introduce false positives.
+MATCH_THRESHOLD: float = 0.8
+
 __all__ = [
     "SAMPLE_RATE",
     "BUFFER_SIZE",
@@ -51,4 +58,5 @@ __all__ = [
     "NOISE_GATE_CALIBRATION_TIME",
     "NOISE_GATE_MARGIN",
     "HP_FILTER_CUTOFF",
+    "MATCH_THRESHOLD",
 ]
