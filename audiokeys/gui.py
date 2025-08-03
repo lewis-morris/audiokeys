@@ -769,9 +769,66 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _create_audio_input_menu(self) -> None:
         audio_menu = self.menuBar().addMenu("Audio Input")
-        # Device submenu
-        self.device_menu = audio_menu.addMenu("Device")
-        self._update_device_menu()
+        self.audio_input_menu = audio_menu  # keep reference for lookup
+        device_group = QtGui.QActionGroup(self)
+        device_group.setExclusive(True)
+
+        if sd is None:
+            act = QtGui.QAction("sounddevice module not available", self)
+            act.setEnabled(False)
+            audio_menu.addAction(act)
+            return
+
+        try:
+            devices = sd.query_devices()
+        except Exception as e:
+            act = QtGui.QAction(f"Audio enumeration failed: {e}", self)
+            act.setEnabled(False)
+            audio_menu.addAction(act)
+            return
+
+        def is_monitor(name: str) -> bool:
+            n = name.lower()
+            return ("monitor" in n) or ("loopback" in n)
+
+        for idx, dev in enumerate(devices):
+            if dev.get("max_input_channels", 0) < 1:
+                continue
+            name = dev["name"]
+            if is_monitor(name):
+                continue  # skip virtual monitors/loopbacks
+            label = f"{idx}: {name}"
+            action = QtGui.QAction(label, self, checkable=True)
+            action.setData(idx)
+            device_group.addAction(action)
+            audio_menu.addAction(action)
+            action.triggered.connect(lambda checked, i=idx: self._select_device(i))
+
+        # Restore preferred input device
+        preferred = self.settings.value("device_in", None)
+        if preferred is None:
+            try:
+                default_in, _ = sd.default.device
+            except Exception:
+                default_in = None
+            preferred = default_in
+
+        for action in audio_menu.actions():
+            data = action.data()
+            if data is None:
+                continue
+            try:
+                if preferred is not None and int(data) == int(preferred):
+                    action.setChecked(True)
+            except Exception:
+                pass
+
+        # Fallback to first real device if none selected
+        if not any(a.isChecked() for a in audio_menu.actions()):
+            for a in audio_menu.actions():
+                if a.isEnabled() and a.data() is not None:
+                    a.setChecked(True)
+                    break
 
     def _update_device_menu(self) -> None:
         """Rebuild the Device submenu showing all physical input devices."""
@@ -843,7 +900,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.setValue(key, idx)
 
     def current_device_index(self):
-        # Return the index of the currently selected device from the menu
+        # prefer new flat audio_input_menu
+        for action in getattr(self, "audio_input_menu", []).actions():
+            if action.isChecked():
+                return action.data()
+        # fallback to old device_menu if still around
         for action in getattr(self, "device_menu", []).actions():
             if action.isChecked():
                 return action.data()
