@@ -7,31 +7,47 @@ from PyInstaller.utils.hooks import (
 from PyInstaller.building.build_main import Analysis, PYZ, EXE, Splash
 import os
 
-# ─── collect datas, bins, hiddenimports ────────────────────────────
+from pathlib import Path
+import os
+import importlib.util
+import glob
+
+block_cipher = None
+
+# ─── Gather everything ──────────────────────────────────────────
 datas, binaries, hiddenimports = [], [], []
 
-# 2) aubio, sounddevice, uinput & pynput backends
 hiddenimports += collect_submodules("aubio")
 hiddenimports += collect_submodules("sounddevice")
-hiddenimports += ["uinput", "pynput"]  # modules, not packages
+hiddenimports += ["pynput"]
 
-# 3) PySide6 GUI modules (explicit, though hooks usually catch these)
+# 3) PySide6 core modules
 hiddenimports += [
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",
 ]
 
-# 4) Application assets (icon, splash, etc.)
-asset_dir = os.path.join("audiokeys", "assets")
-for fn in ("icon.ico", "icon.png", "splash.xcf"):  # if .xcf fails, convert to .png
-    src = os.path.join(asset_dir, fn)
-    if os.path.exists(src):
-        datas.append((src, os.path.join("audiokeys", "assets")))
+pk_datas, pk_bins, pk_hidden = collect_all("q_materialise")
+datas += pk_datas
+binaries += pk_bins
+hiddenimports += pk_hidden
 
-# Optional: dynamic libs (harmless if none found)
+
+asset_dir = Path("audiokeys") / "assets"
+datas += [
+    (str(p), "assets")  # ← was "audiokeys/assets"
+    for p in asset_dir.glob("*")
+    if p.is_file() and p.suffix.lower() != ".xcf"
+]
+
+hiddenimports += ["PySide6.QtSvg"]
+
 binaries += collect_dynamic_libs("sounddevice")
+# aubio may or may not ship shared libs; harmless if none:
 binaries += collect_dynamic_libs("aubio")
+
+
 
 # ─── Analysis ───────────────────────────────────────────────────────
 block_cipher = None
@@ -79,7 +95,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,  # set False if you don't want a console window
+    console=False,  # set False if you don't want a console window
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

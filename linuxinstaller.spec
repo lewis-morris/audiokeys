@@ -1,84 +1,97 @@
-# linux.spec
+# linux.spec — tidy, one-file build that correctly bundles python-uinput's C ext
+
+from pathlib import Path
+import os
+import importlib.util
+import sysconfig
 
 from PyInstaller.utils.hooks import (
     collect_all,
     collect_submodules,
     collect_dynamic_libs,
-    collect_data_files
 )
-from pathlib import Path
-import os
-import importlib.util
-import glob
 
 block_cipher = None
 
-# ─── Gather everything ──────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
+def add_binary(path: str | None, dest: str = "."):
+    if path and os.path.exists(path):
+        binaries.append((path, dest))
+
+# ── Gather everything ──────────────────────────────────────────────────────────
 datas, binaries, hiddenimports = [], [], []
 
-# 2) aubio, sounddevice, uinput, pynput
-hiddenimports += collect_submodules("aubio")
-hiddenimports += collect_submodules("sounddevice")
-hiddenimports += ["uinput", "pynput"]
+# App assets (flat files only; adjust to rglob if you add nested dirs)
+asset_dir = Path("audiokeys") / "assets"
+for p in sorted(asset_dir.glob("*")):
+    if p.is_file() and p.suffix.lower() != ".xcf":
+        datas.append((str(p), "assets"))
 
-# 3) PySide6 core modules
-hiddenimports += [
-    "PySide6.QtCore",
-    "PySide6.QtGui",
-    "PySide6.QtWidgets",
-]
-
+# Project lib that ships data/binaries
 pk_datas, pk_bins, pk_hidden = collect_all("q_materialise")
 datas += pk_datas
 binaries += pk_bins
 hiddenimports += pk_hidden
 
-
-asset_dir = Path("audiokeys") / "assets"
-datas += [
-    (str(p), "assets")  # ← was "audiokeys/assets"
-    for p in asset_dir.glob("*")
-    if p.is_file() and p.suffix.lower() != ".xcf"
+# Runtime libs / hidden imports
+hiddenimports += collect_submodules("aubio")
+hiddenimports += collect_submodules("sounddevice")
+hiddenimports += [
+    "uinput",
+    "pynput",
+    # Qt modules explicitly referenced
+    "PySide6.QtCore",
+    "PySide6.QtGui",
+    "PySide6.QtWidgets",
+    "PySide6.QtSvg",
 ]
 
-hiddenimports += ["PySide6.QtSvg"]
+# Dynamic libraries pulled by Python modules at runtime
+binaries += collect_dynamic_libs("sounddevice")  # portaudio
+binaries += collect_dynamic_libs("aubio")        # aubio (if present)
 
-binaries += collect_dynamic_libs("sounddevice")
-# aubio may or may not ship shared libs; harmless if none:
-binaries += collect_dynamic_libs("aubio")
-binaries += collect_dynamic_libs("uinput")
-spec_u = importlib.util.find_spec("uinput")
+# ── Ensure python-uinput's C extension is present at MEIPASS root ─────────────
+# python-uinput loads a top-level module named _libsuinput via ctypes.
+# It lives at site-packages/_libsuinput<EXT>.so (NOT inside the uinput/ pkg).
+# PyInstaller's ctypes support will look in the MEIPASS root for this filename.
+ext_suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
 
-if spec_u and spec_u.origin:
-    _u_pkg_dir = Path(spec_u.origin).parent
-    _u_libs = sorted(_u_pkg_dir.glob("_libsuinput*.so"))
-    if _u_libs:
-        # Put the .so at MEIPASS root (".") so pyimod03_ctypes can find it.
-        binaries.append((str(_u_libs[0]), "."))
-    else:
-        print("WARNING: uinput native lib not found next to uinput package")
+# 1) Try to locate as a top-level module
+spec_su = importlib.util.find_spec("_libsuinput")
+if spec_su and spec_su.origin:
+    add_binary(spec_su.origin, ".")
+    hiddenimports.append("_libsuinput")
 else:
-    print("WARNING: uinput package not importable during spec collection")
+    # 2) Fallback: find the uinput package and look one dir up
+    spec_u = importlib.util.find_spec("uinput")
+    if spec_u and spec_u.origin:
+        u_pkg_dir = Path(spec_u.origin).parent
+        candidate = u_pkg_dir.parent / f"_libsuinput{ext_suffix}"
+        if candidate.exists():
+            add_binary(str(candidate), ".")
+            hiddenimports.append("_libsuinput")
+        else:
+            print("WARNING: _libsuinput not found next to site-packages; is python-uinput installed?")
+    else:
+        print("WARNING: uinput package not importable during spec collection")
 
-# ─── Analysis ───────────────────────────────────────────────────
+# ── PyInstaller build graph ───────────────────────────────────────────────────
 a = Analysis(
     ["main.py"],
-    pathex=[],
+    pathex=["."],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=[],
-    runtime_hooks=[],
-    excludes=[],
+    hookspath=[],                # add custom hooks here if you create any
+    runtime_hooks=[],            # add runtime hooks here if needed
+    excludes=[],                 # e.g. ["tkinter"] if unused
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     noarchive=False,
 )
 
-# ─── PYZ ────────────────────────────────────────────────────────
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-# ─── EXE (no splash) ───────────────────────────────────────────
 exe = EXE(
     pyz,
     a.scripts,
@@ -88,8 +101,8 @@ exe = EXE(
     name="audiokeys",
     debug=False,
     strip=False,
-    upx=True,
-    console=True,     # show the terminal on Linux
+    upx=False,                   # clearer on Linux; set True only if you know UPX is safe
+    console=True,                # show terminal on Linux
     disable_windowed_traceback=False,
     argv_emulation=False,
     icon=os.path.join("audiokeys", "assets", "icon.png"),
