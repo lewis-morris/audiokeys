@@ -62,12 +62,14 @@ try:
     from audiokeys.sound_worker import SoundWorker  # type: ignore
     from audiokeys.sample_matcher import record_until_silence  # type: ignore
     from audiokeys.utils import generate_sample_id, resource_path  # type: ignore
+    from audiokeys.noise_gate import calculate_noise_floor  # type: ignore
 except Exception:
     # Local fallback imports – only works when run from the project root
     import constants  # type: ignore
     from sound_worker import SoundWorker  # type: ignore
     from sample_matcher import record_until_silence  # type: ignore
     from utils import generate_sample_id, resource_path  # type: ignore
+    from noise_gate import calculate_noise_floor  # type: ignore
 
 # ─── Note ──────────────────────────────────────────────────────────────────
 # The audio capture and key mapping features are designed to work cross‑platform.
@@ -125,6 +127,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # store labels for each note mapping so we can update them easily
         self.key_labels: dict[str, QtWidgets.QLineEdit] = {}
+        # widgets representing each mapping for grid layout
+        self.mapping_widgets: dict[str, QtWidgets.QWidget] = {}
 
         # Build the user interface
         self._build_ui()
@@ -178,9 +182,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         root_layout.addWidget(self._make_heading("Key Mapping"))
 
-        # List of dynamically added mappings
-        self.mapping_list = QtWidgets.QVBoxLayout()
-        root_layout.addLayout(self.mapping_list)
+        # Grid of dynamically added mappings (2 per row)
+        self.mapping_grid = QtWidgets.QGridLayout()
+        root_layout.addLayout(self.mapping_grid)
 
         add_btn = QtWidgets.QPushButton("Add Key Mapping")
         add_btn.clicked.connect(self._add_mapping)
@@ -470,11 +474,12 @@ class MainWindow(QtWidgets.QMainWindow):
         _ = str(self.settings.value("detection_method", "aubio"))
         noise_floor_key = f"noise_floor_{idx}"
         noise_floor_val = self.settings.value(noise_floor_key, None)
+        preset_floor = None
         try:
             if noise_floor_val is not None:
-                float(noise_floor_val)
+                preset_floor = float(noise_floor_val)
         except Exception:
-            pass
+            preset_floor = None
 
         self.worker = SoundWorker(
             idx,
@@ -487,6 +492,7 @@ class MainWindow(QtWidgets.QMainWindow):
             hp_cutoff=hp_cutoff,
             noise_gate_duration=gate_dur,
             noise_gate_margin=gate_margin,
+            preset_noise_floor=preset_floor,
             match_threshold=0.8,
             send_enabled=not getattr(self, "test_mode", False),
         )
@@ -589,31 +595,39 @@ class MainWindow(QtWidgets.QMainWindow):
         self._save_mappings()
 
     def _add_mapping_row(self, sample_id: str, key_name: str) -> None:
-        row = QtWidgets.QHBoxLayout()
+        container = QtWidgets.QWidget()
+        row = QtWidgets.QHBoxLayout(container)
+        row.setContentsMargins(4, 4, 4, 4)
         lbl = QtWidgets.QLabel(sample_id)
         key_lbl = QtWidgets.QLineEdit(key_name)
         key_lbl.setReadOnly(True)
         self.key_labels[sample_id] = key_lbl
 
-        change_btn = QtWidgets.QPushButton("Change Key")
+        change_btn = QtWidgets.QToolButton()
+        change_btn.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_BrowserReload))
+        change_btn.setAutoRaise(True)
+        change_btn.setToolTip("Change Key")
         change_btn.clicked.connect(lambda _=False, s=sample_id: self._change_key(s))
 
-        rec_btn = QtWidgets.QPushButton("Re-record")
-        rec_btn.clicked.connect(lambda _=False, s=sample_id: self._record_again(s))
+        edit_btn = QtWidgets.QToolButton()
+        edit_btn.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaRecord))
+        edit_btn.setAutoRaise(True)
+        edit_btn.setToolTip("Edit Samples")
+        edit_btn.clicked.connect(lambda _=False, s=sample_id: self._record_again(s))
 
-        del_btn = QtWidgets.QPushButton("Delete")
-        del_btn.clicked.connect(
-            lambda _=False, s=sample_id, layout=row: self._delete_mapping(s, layout)
-        )
+        del_btn = QtWidgets.QToolButton()
+        del_btn.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_TrashIcon))
+        del_btn.setAutoRaise(True)
+        del_btn.setToolTip("Delete Mapping")
+        del_btn.clicked.connect(lambda _=False, s=sample_id: self._delete_mapping(s))
 
         row.addWidget(lbl)
         row.addWidget(key_lbl)
         row.addWidget(change_btn)
-        row.addWidget(rec_btn)
+        row.addWidget(edit_btn)
         row.addWidget(del_btn)
-        container = QtWidgets.QWidget()
-        container.setLayout(row)
-        self.mapping_list.addWidget(container)
+        self.mapping_widgets[sample_id] = container
+        self._rebuild_mapping_grid()
 
     def _change_key(self, sample_id: str) -> None:
         if self.worker and self.worker.isRunning():
@@ -644,7 +658,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self.sample_files[sample_id] = str(path)
             self._save_mappings()
 
-    def _delete_mapping(self, sample_id: str, layout: QtWidgets.QHBoxLayout) -> None:
+    def _rebuild_mapping_grid(self) -> None:
+        """Repopulate the mapping grid after additions or deletions."""
+        while self.mapping_grid.count():
+            item = self.mapping_grid.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+        for idx, widget in enumerate(self.mapping_widgets.values()):
+            row = idx // 2
+            col = idx % 2
+            self.mapping_grid.addWidget(widget, row, col)
+
+    def _delete_mapping(self, sample_id: str) -> None:
         if sample_id in self.samples:
             del self.samples[sample_id]
         if sample_id in self.note_map:
@@ -654,11 +679,11 @@ class MainWindow(QtWidgets.QMainWindow):
         path = self.sample_files.pop(sample_id, None)
         if path:
             Path(path).unlink(missing_ok=True)
+        widget = self.mapping_widgets.pop(sample_id, None)
+        if widget is not None:
+            widget.setParent(None)
         self._save_mappings()
-        # remove widget from layout
-        item = layout.parentWidget()
-        if item is not None:
-            item.setParent(None)
+        self._rebuild_mapping_grid()
 
     # -----------------------------------------------------------------
     # Amplitude meter callback
@@ -1047,20 +1072,6 @@ class SettingsDialog(QtWidgets.QDialog):
             ),
         )
 
-        # Hop size
-        default_hop = int(settings.value("hop_size", constants.HOP_SIZE))
-        self.hop_size_spin = QtWidgets.QSpinBox()
-        self.hop_size_spin.setRange(64, 4096)
-        self.hop_size_spin.setSingleStep(64)
-        self.hop_size_spin.setValue(default_hop)
-        form.addRow(
-            "Hop size",
-            make_field(
-                self.hop_size_spin,
-                "Processing hop size in samples; typically a quarter of the buffer size.",
-            ),
-        )
-
         # Noise gate margin
         default_gate_margin = float(
             settings.value("noise_gate_margin", constants.NOISE_GATE_MARGIN)
@@ -1095,6 +1106,10 @@ class SettingsDialog(QtWidgets.QDialog):
             ),
         )
 
+        cal_btn = QtWidgets.QPushButton("Calibrate Noise Floor")
+        cal_btn.clicked.connect(self._calibrate_noise_floor)
+        layout.addWidget(cal_btn)
+
         self.buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
             QtCore.Qt.Horizontal,
@@ -1108,7 +1123,45 @@ class SettingsDialog(QtWidgets.QDialog):
         settings = self.parent_window.settings
         settings.setValue("sample_rate", self.sample_rate_spin.value())
         settings.setValue("buffer_size", self.buffer_size_spin.value())
-        settings.setValue("hop_size", self.hop_size_spin.value())
         settings.setValue("noise_gate_margin", self.gate_margin_spin.value())
         settings.setValue("hp_cutoff", self.hp_cutoff_spin.value())
         super().accept()
+
+    def _calibrate_noise_floor(self) -> None:
+        """Measure ambient noise and store it for the selected device."""
+        idx = self.parent_window.device_combo.currentData()
+        if idx is None:
+            QtWidgets.QMessageBox.warning(self, "No device", "Select an audio device.")
+            return
+        if sd is None:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Audio support missing",
+                "The sounddevice module could not be loaded.",
+            )
+            return
+        try:
+            sample_rate = int(self.sample_rate_spin.value())
+            duration = 2.0
+            total = int(sample_rate * duration)
+            blocks: list[np.ndarray] = []
+            with sd.InputStream(
+                device=int(idx),
+                channels=1,
+                samplerate=sample_rate,
+                blocksize=constants.HOP_SIZE,
+                dtype="float32",
+            ) as stream:
+                while sum(b.size for b in blocks) < total:
+                    data, _ = stream.read(constants.HOP_SIZE)
+                    blocks.append(data.reshape(-1))
+            samples = np.concatenate(blocks)[:total]
+            floor = calculate_noise_floor(samples)
+            self.parent_window.settings.setValue(f"noise_floor_{idx}", floor)
+            QtWidgets.QMessageBox.information(
+                self,
+                "Calibration complete",
+                "Noise floor stored.",
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "Calibration failed", str(e))

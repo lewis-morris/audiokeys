@@ -46,6 +46,7 @@ class SoundWorker(QtCore.QThread):
         hp_cutoff: float = HP_FILTER_CUTOFF,
         noise_gate_duration: float = NOISE_GATE_CALIBRATION_TIME,
         noise_gate_margin: float = NOISE_GATE_MARGIN,
+        preset_noise_floor: Optional[float] = None,
         match_threshold: float = 0.8,
         send_enabled: bool = True,
         min_press_interval: float = 0.25,
@@ -69,6 +70,7 @@ class SoundWorker(QtCore.QThread):
             margin=noise_gate_margin,
             sample_rate=sample_rate,
             hop_size=hop_size,
+            preset_noise_floor=preset_noise_floor,
         )
         self.sender = KeySender(self.note_map, send_enabled=send_enabled)
         self.hp_sos = butter(2, hp_cutoff, "hp", fs=sample_rate, output="sos")
