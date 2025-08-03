@@ -909,6 +909,9 @@ class SampleDialog(QtWidgets.QDialog):
 
         self._thread: Optional[RecordingThread] = None
 
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(500)
+
     # ------------------------------------------------------------------
     def _toggle_recording(self) -> None:
         if self._thread and self._thread.isRunning():
