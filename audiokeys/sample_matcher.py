@@ -28,8 +28,6 @@ except ModuleNotFoundError:  # pragma: no cover - runtime fallback when numba is
     numba.guvectorize = _decorator  # type: ignore[attr-defined]
     sys.modules["numba"] = numba
 
-import librosa
-
 # Supported matching techniques
 DetectionMethod = Literal["waveform", "mfcc", "dtw"]
 
@@ -51,7 +49,7 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 def _mfcc_mean(samples: np.ndarray, sample_rate: int) -> np.ndarray:
     """Return the mean MFCC vector for ``samples``."""
 
-    mfcc = librosa.feature.mfcc(y=samples, sr=sample_rate, n_mfcc=13)
+    mfcc = audiokeys.librosa.feature.mfcc(y=samples, sr=sample_rate, n_mfcc=13)
     return mfcc.mean(axis=1)
 
 
@@ -69,7 +67,7 @@ def _dtw_mfcc_similarity(mfcc_a: np.ndarray, mfcc_b: np.ndarray) -> float:
     # ``librosa.sequence.dtw`` returns both the cost matrix and the alignment
     # path by default.  ``backtrack=False`` avoids computing the path which we
     # don't use, significantly reducing CPU and memory usage for long signals.
-    dist = librosa.sequence.dtw(mfcc_a, mfcc_b, metric="cosine", backtrack=False)
+    dist = audiokeys.librosa.sequence.dtw(mfcc_a, mfcc_b, metric="cosine", backtrack=False)
     final = float(dist[-1, -1])
     return 1.0 / (1.0 + final)
 
@@ -109,7 +107,7 @@ def match_sample(
         # Pre-compute MFCCs for the segment once.  Previously these were
         # calculated for every reference sample which caused significant
         # slowdown in the GUI when using DTW.
-        segment_feat = librosa.feature.mfcc(y=segment, sr=sample_rate, n_mfcc=13)
+        segment_feat = audiokeys.librosa.feature.mfcc(y=segment, sr=sample_rate, n_mfcc=13)
     else:
         segment_feat = segment
     for key, refs in samples.items():
@@ -124,7 +122,7 @@ def match_sample(
                 ref_feat = _mfcc_mean(ref, sample_rate)
                 score = cosine_similarity(segment_feat, ref_feat)
             elif method == "dtw":
-                ref_feat = librosa.feature.mfcc(y=ref, sr=sample_rate, n_mfcc=13)
+                ref_feat = audiokeys.librosa.feature.mfcc(y=ref, sr=sample_rate, n_mfcc=13)
                 score = _dtw_mfcc_similarity(segment_feat, ref_feat)
             else:  # pragma: no cover - validated by type
                 raise ValueError(f"Unknown method: {method}")

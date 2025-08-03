@@ -85,8 +85,6 @@ def test_match_sample_dtw() -> None:
 def test_dtw_segment_mfcc_computed_once(monkeypatch: pytest.MonkeyPatch) -> None:
     """DTW should compute the segment MFCC only once per call."""
 
-    import librosa
-
     sr = 8000
     segment = _sine(440, sr)
     ref_a = _sine(440, sr)
@@ -94,14 +92,14 @@ def test_dtw_segment_mfcc_computed_once(monkeypatch: pytest.MonkeyPatch) -> None
 
     calls = 0
 
-    original = librosa.feature.mfcc
+    original = audiokeys.librosa.feature.mfcc
 
     def counting_mfcc(*args, **kwargs):
         nonlocal calls
         calls += 1
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(librosa.feature, "mfcc", counting_mfcc)
+    monkeypatch.setattr(audiokeys.librosa.feature, "mfcc", counting_mfcc)
 
     match_sample(
         segment,
