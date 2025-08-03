@@ -8,6 +8,8 @@ from PyInstaller.utils.hooks import (
 )
 from pathlib import Path
 import os
+import importlib.util
+import glob
 
 block_cipher = None
 
@@ -45,6 +47,18 @@ binaries += collect_dynamic_libs("sounddevice")
 # aubio may or may not ship shared libs; harmless if none:
 binaries += collect_dynamic_libs("aubio")
 binaries += collect_dynamic_libs("uinput")
+spec_u = importlib.util.find_spec("uinput")
+
+if spec_u and spec_u.origin:
+    _u_pkg_dir = Path(spec_u.origin).parent
+    _u_libs = sorted(_u_pkg_dir.glob("_libsuinput*.so"))
+    if _u_libs:
+        # Put the .so at MEIPASS root (".") so pyimod03_ctypes can find it.
+        binaries.append((str(_u_libs[0]), "."))
+    else:
+        print("WARNING: uinput native lib not found next to uinput package")
+else:
+    print("WARNING: uinput package not importable during spec collection")
 
 # ─── Analysis ───────────────────────────────────────────────────
 a = Analysis(
