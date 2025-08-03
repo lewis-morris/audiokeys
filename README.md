@@ -1,10 +1,11 @@
-# audiokeys
+# AudioKeys
 
 **Version 0.1.0**
 
-AudioKeys transforms any sound into a versatile input device by listening to
-your chosen audio source and matching it against user‑recorded samples. When a
-match is found the corresponding keyboard key is pressed.
+AudioKeys transforms short audio snippets into keyboard input. The application
+listens to your selected audio source, compares what it hears against
+user‑recorded samples and presses the associated key whenever a match is
+detected.
 
 ## Features
 
@@ -19,31 +20,34 @@ match is found the corresponding keyboard key is pressed.
 
 ## Download
 
-Pre-built releases for Linux and Windows are available on the [GitHub Releases](https://github.com/lewis-morris/audiokeys/releases) page.
-
-## Quick Start
-
-1. Download the appropriate release for your platform.
-2. Extract the archive.
-3. Run the executable:
-   - **Linux:** `./audiokeys`
-   - **Windows:** double-click `audiokeys.exe`
+Pre‑built binaries for **Linux** and **Windows** are available on the
+[GitHub Releases](https://github.com/lewis-morris/audiokeys/releases) page.
+No compilation or build tools are required.
 
 ## Usage
 
-1. Launch **AudioKeys**.
-2. Click **Add Key Mapping** to record a sample. Recording stops automatically
-   when silence is detected. Choose the keyboard key to associate with the
-   sound. Repeat to add more samples or variations for the same key.
-3. **Audio Input Device:** Choose between microphone/line-in or system output.
-4. **Audio Device:** Select the specific audio device from the dropdown.
-5. Click **Start Listening** to begin matching sounds. Matches will send
-   keystrokes and appear in the log.
-6. Click **Stop Listening** to end.
+1. Download the release for your platform and extract the archive.
+2. Run the executable:
+   - **Linux:** `./audiokeys`
+   - **Windows:** double‑click `audiokeys.exe`
+3. Choose an **Audio Input** from the toolbar. Any microphone or loopback
+   device can be used.
+4. Click **Add Key Mapping** to create a mapping:
+   - Record **five to ten samples** of the sound you want to use.
+   - Give the sound a descriptive name.
+   - Select the keyboard key to press when the sound is detected.
+   Repeat for each key you want to control.
+5. Open **Settings** to adjust detection parameters such as sample rate,
+   buffer size, noise gate margin, matching algorithm, match threshold and
+   high‑pass filter cutoff. These controls help tune sensitivity for your
+   environment.
+6. Click **Start Listening**. When a recorded sound is heard, AudioKeys sends
+   the mapped key press and logs the detection.
+7. Click **Stop Listening** to finish.
 
 ## Configuration Persistence
 
-Your recorded samples, key mappings and last-used audio device are saved
+Recorded samples, key mappings and the last used audio device are saved
 automatically between sessions.
 
 ## Troubleshooting
@@ -55,7 +59,7 @@ automatically between sessions.
 
 ## License
 
-MIT License – see [LICENSE](https://github.com/lewis-morris/audiokeys/blob/main/LICENSE) for details.
+Distributed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ## Authors
 

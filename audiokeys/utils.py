@@ -56,13 +56,13 @@ chmod 666 /dev/uinput 2>/dev/null || true
 
 
 def resource_path(relative_path: str) -> str:
-    """
-    Get absolute path to resource, works for dev and for PyInstaller.
+    """Return the absolute path to a bundled resource.
 
     Args:
-        relative_path (str): Relative path to the resource.
+        relative_path: Path relative to the package directory.
+
     Returns:
-        str: Absolute path to the resource.
+        Absolute path to the requested resource.
     """
     if getattr(sys, "frozen", False):
         # PyInstaller places extracted files in _MEIPASS
@@ -75,22 +75,15 @@ def resource_path(relative_path: str) -> str:
 
 
 def generate_sample_id(base: str, existing: Iterable[str]) -> str:
-    """Return a unique sample identifier.
+    """Return a unique identifier based on ``base``.
 
-    The identifier takes the form ``"{base}_{n}"`` where ``n`` is the lowest
-    positive integer that does not collide with ``existing``.
+    Args:
+        base: User-provided name for the sample (e.g., ``"tap"``).
+        existing: Collection of identifiers already in use.
 
-    Parameters
-    ----------
-    base:
-        Base name provided by the user, e.g. ``"tap"``.
-    existing:
-        Collection of identifiers already in use.
-
-    Returns
-    -------
-    str
-        A unique identifier incorporating ``base``.
+    Returns:
+        A unique identifier of the form ``"{base}_{n}"`` where ``n`` is the
+        lowest unused positive integer.
     """
 
     # Ensure the base is safe for filenames by stripping whitespace and
