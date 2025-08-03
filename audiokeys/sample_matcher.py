@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Mapping, Optional
 
 import numpy as np
+import threading
 
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -49,8 +50,12 @@ def record_until_silence(
     silence_duration: float = 0.5,
     max_duration: float = 5.0,
     channels: int = 1,
+    stop_event: Optional["threading.Event"] = None,
 ) -> np.ndarray:
-    """Record audio until ``silence_duration`` of silence is detected."""
+    """Record audio until ``silence_duration`` of silence is detected.
+
+    Recording stops early if ``stop_event`` is set.
+    """
     import sounddevice as sd
 
     frames: list[np.ndarray] = []
@@ -65,6 +70,8 @@ def record_until_silence(
         dtype="float32",
     ) as stream:
         while sum(len(x) for x in frames) < limit:
+            if stop_event and stop_event.is_set():
+                break
             data, _ = stream.read(hop_size)
             if data.ndim == 2 and data.shape[1] > 1:
                 block = data.mean(axis=1)
@@ -78,7 +85,9 @@ def record_until_silence(
                     break
             else:
                 silent = 0
-    return np.concatenate(frames)
+    if frames:
+        return np.concatenate(frames)
+    return np.array([], dtype=np.float32)
 
 
 __all__ = ["cosine_similarity", "match_sample", "record_until_silence"]

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -545,26 +546,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.ensureCursorVisible()
 
     # -----------------------------------------------------------------
-    def _record_sample_dialog(self, device_index: int) -> np.ndarray:
-        """Record a single sample using a modal dialog.
-
-        Parameters
-        ----------
-        device_index:
-            Index of the audio device to record from.
-
-        Returns
-        -------
-        np.ndarray
-            Recorded audio data.  If recording was cancelled, an empty
-            array is returned.
-        """
-
-        dlg = RecordingDialog(self, device_index)
-        if dlg.exec() == QtWidgets.QDialog.Accepted:
-            return dlg.get_sample()
-        return np.array([], dtype=np.float32)
-
     # -----------------------------------------------------------------
     # Key selection
     def _add_mapping(self) -> None:
@@ -610,10 +591,12 @@ class MainWindow(QtWidgets.QMainWindow):
         change_btn.clicked.connect(lambda _=False, s=sample_id: self._change_key(s))
 
         edit_btn = QtWidgets.QToolButton()
-        edit_btn.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaPlay))
+        edit_btn.setIcon(
+            self.style().standardIcon(QtWidgets.QStyle.SP_FileDialogDetailedView)
+        )
         edit_btn.setAutoRaise(True)
         edit_btn.setToolTip("Edit Samples")
-        edit_btn.clicked.connect(lambda _=False, s=sample_id: self._record_again(s))
+        edit_btn.clicked.connect(lambda _=False, s=sample_id: self._edit_samples(s))
 
         del_btn = QtWidgets.QToolButton()
         del_btn.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_TrashIcon))
@@ -641,22 +624,38 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.key_labels[sample_id].setText(key)
             self._save_mappings()
 
-    def _record_again(self, sample_id: str) -> None:
+    def _edit_samples(self, sample_id: str) -> None:
+        """Open ``SampleDialog`` to replace or remove samples for ``sample_id``."""
         idx = self.device_combo.currentData()
         if idx is None:
             QtWidgets.QMessageBox.warning(self, "No device", "Select an audio device.")
             return
 
-        sample = self._record_sample_dialog(int(idx))
-        if sample.size:
-            self.samples[sample_id] = sample
-            path_str = self.sample_files.get(
-                sample_id, str(self.data_dir / f"{sample_id}.npy")
-            )
-            path = Path(path_str)
+        key = self.note_map.get(sample_id, "")
+        existing = self.samples.get(sample_id)
+        dlg = SampleDialog(
+            self,
+            int(idx),
+            name=sample_id,
+            samples=[existing] if existing is not None else None,
+            name_readonly=True,
+        )
+        if dlg.exec() != QtWidgets.QDialog.Accepted:
+            return
+
+        # Remove old mapping
+        self._delete_mapping(sample_id)
+
+        base = dlg.get_name()
+        for sample in dlg.samples:
+            new_id = generate_sample_id(base, self.samples.keys())
+            self.samples[new_id] = sample
+            self.note_map[new_id] = key
+            path = self.data_dir / f"{new_id}.npy"
             np.save(path, sample)
-            self.sample_files[sample_id] = str(path)
-            self._save_mappings()
+            self.sample_files[new_id] = str(path)
+            self._add_mapping_row(new_id, key)
+        self._save_mappings()
 
     def _rebuild_mapping_grid(self) -> None:
         """Repopulate the mapping grid after additions or deletions."""
@@ -842,56 +841,61 @@ class RecordingThread(QtCore.QThread):
     def __init__(self, device_index: int) -> None:
         super().__init__()
         self.device_index = device_index
+        self._stop = threading.Event()
 
     def run(self) -> None:  # noqa: D401 - simple delegator
-        sample = record_until_silence(self.device_index)
+        sample = record_until_silence(self.device_index, stop_event=self._stop)
         self.recorded.emit(sample)
 
-
-class RecordingDialog(QtWidgets.QDialog):
-    """Modal dialog that displays a recording indicator."""
-
-    def __init__(self, parent: QtWidgets.QWidget, device_index: int) -> None:
-        super().__init__(parent)
-        self._sample = np.array([], dtype=np.float32)
-        self.setWindowTitle("Recording…")
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(QtWidgets.QLabel("Recording…"))
-        self.thread = RecordingThread(device_index)
-        self.thread.recorded.connect(self._on_recorded)
-        self.thread.start()
-
-    def _on_recorded(self, sample: np.ndarray) -> None:
-        self._sample = sample
-        self.accept()
-
-    def get_sample(self) -> np.ndarray:
-        """Return the recorded sample once the dialog closes."""
-        return self._sample
+    def stop(self) -> None:
+        """Request the recording thread to stop."""
+        self._stop.set()
 
 
 class SampleDialog(QtWidgets.QDialog):
     """Dialog for naming a sound and recording multiple samples."""
 
-    def __init__(self, parent: QtWidgets.QWidget, device_index: int) -> None:
+    def __init__(
+        self,
+        parent: QtWidgets.QWidget,
+        device_index: int,
+        *,
+        name: str = "",
+        samples: Optional[list[np.ndarray]] = None,
+        name_readonly: bool = False,
+    ) -> None:
         super().__init__(parent)
         self.device_index = device_index
-        self.samples: list[np.ndarray] = []
+        self.samples: list[np.ndarray] = samples[:] if samples else []
         self.setWindowTitle("Record Samples")
         layout = QtWidgets.QVBoxLayout(self)
 
         name_layout = QtWidgets.QHBoxLayout()
         name_layout.addWidget(QtWidgets.QLabel("Sound name:"))
-        self.name_edit = QtWidgets.QLineEdit()
+        self.name_edit = QtWidgets.QLineEdit(name)
+        self.name_edit.setReadOnly(name_readonly)
         name_layout.addWidget(self.name_edit)
         layout.addLayout(name_layout)
 
         self.list_widget = QtWidgets.QListWidget()
+        for idx in range(len(self.samples)):
+            self.list_widget.addItem(f"Sample {idx + 1}")
         layout.addWidget(self.list_widget)
 
+        btn_layout = QtWidgets.QHBoxLayout()
         self.record_btn = QtWidgets.QPushButton("Record Sample")
-        self.record_btn.clicked.connect(self._record_sample)
-        layout.addWidget(self.record_btn)
+        self.record_btn.clicked.connect(self._toggle_recording)
+        btn_layout.addWidget(self.record_btn)
+
+        self.play_btn = QtWidgets.QPushButton("Play")
+        self.play_btn.clicked.connect(self._play_sample)
+        btn_layout.addWidget(self.play_btn)
+
+        self.delete_btn = QtWidgets.QPushButton("Delete")
+        self.delete_btn.clicked.connect(self._delete_sample)
+        btn_layout.addWidget(self.delete_btn)
+
+        layout.addLayout(btn_layout)
 
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
@@ -902,21 +906,51 @@ class SampleDialog(QtWidgets.QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    # ------------------------------------------------------------------
-    def _record_sample(self) -> None:
-        self.record_btn.setEnabled(False)
-        self.record_btn.setText("Recording…")
-        thread = RecordingThread(self.device_index)
-        thread.recorded.connect(lambda s: self._on_recorded(s, thread))
-        thread.start()
+        self._thread: Optional[RecordingThread] = None
 
-    def _on_recorded(self, sample: np.ndarray, thread: RecordingThread) -> None:
-        thread.quit()
-        thread.wait()
-        self.samples.append(sample)
-        self.list_widget.addItem(f"Sample {len(self.samples)}")
-        self.record_btn.setEnabled(True)
+    # ------------------------------------------------------------------
+    def _toggle_recording(self) -> None:
+        if self._thread and self._thread.isRunning():
+            self._thread.stop()
+            return
+        self.record_btn.setText("Stop")
+        self._thread = RecordingThread(self.device_index)
+        self._thread.recorded.connect(self._on_recorded)
+        self._thread.start()
+
+    def _on_recorded(self, sample: np.ndarray) -> None:
+        if self._thread:
+            self._thread.quit()
+            self._thread.wait()
+            self._thread = None
+        if sample.size:
+            self.samples.append(sample)
+            self.list_widget.addItem(f"Sample {len(self.samples)}")
         self.record_btn.setText("Record Sample")
+
+    def _play_sample(self) -> None:
+        if not sd:
+            return
+        items = self.list_widget.selectedIndexes()
+        if not items:
+            return
+        sample = self.samples[items[0].row()]
+        sd.play(sample, 44_100)
+        sd.wait()
+
+    def _delete_sample(self) -> None:
+        items = self.list_widget.selectedIndexes()
+        if not items:
+            return
+        idx = items[0].row()
+        self.samples.pop(idx)
+        self.list_widget.takeItem(idx)
+
+    def reject(self) -> None:  # noqa: D401 - close dialog
+        if self._thread and self._thread.isRunning():
+            self._thread.stop()
+            self._thread.wait()
+        super().reject()
 
     def accept(self) -> None:
         if not self.samples:
