@@ -48,8 +48,8 @@ import other modules from the ``audiokeys`` package first and falls back
 to relative imports on failure.
 
 The menu bar exposes ``File`` (with an Exit action), ``Settings``
-(opening a dialog to tweak audio parameters) and ``Help`` (providing
-links to documentation and an About dialog).  User‑adjustable audio
+(opening a dialogue to tweak audio parameters) and ``Help`` (providing
+links to documentation and an About dialogue).  User‑adjustable audio
 parameters are persisted via ``QSettings``, meaning values survive
 between launches without editing the ``constants.py`` file.
 """
@@ -857,10 +857,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         * **File → Exit** closes the application.
         * **Settings → Audio Parameters…** opens the audio parameter
-          dialog.
+          dialogue.
         * **Help → Visit Docs** opens the project documentation in the
           default web browser.
-        * **Help → About** shows an About dialog describing the
+        * **Help → About** shows an About dialogue describing the
           application.
         """
         menubar = self.menuBar()
@@ -873,7 +873,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Settings menu containing audio parameters
         settings_menu = menubar.addMenu("Settings")
         audio_action = settings_menu.addAction("Audio Parameters…")
-        audio_action.triggered.connect(self._open_settings_dialog)
+        audio_action.triggered.connect(self._open_settings_dialogue)
 
         self._create_audio_input_menu()
 
@@ -885,16 +885,16 @@ class MainWindow(QtWidgets.QMainWindow):
         about_action.triggered.connect(self._show_about)
 
     # -----------------------------------------------------------------
-    def _open_settings_dialog(self) -> None:
+    def _open_settings_dialogue(self) -> None:
         """
-        Open the audio parameter dialog.
+        Open the audio parameter dialogue.
 
         If audio capture is currently running, the worker is
-        stopped before displaying the settings dialog.  This
+        stopped before displaying the settings dialogue.  This
         prevents the background listener from sending key events
-        while the user is interacting with the dialog.  When the
-        user accepts the dialog the worker is restarted with the
-        updated settings.  If the dialog is cancelled the worker
+        while the user is interacting with the dialogue.  When the
+        user accepts the dialogue the worker is restarted with the
+        updated settings.  If the dialogue is cancelled the worker
         remains stopped until the user explicitly starts listening
         again via the main window.
         """
@@ -905,9 +905,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         dlg = SettingsDialog(self)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
-            # The settings dialog persists values via QSettings on accept.
+            # The settings dialogue persists values via QSettings on accept.
             # Previously the worker would restart automatically here, but
-            # this behaviour has been removed so that closing the dialog
+            # this behaviour has been removed so that closing the dialogue
             # does not implicitly start listening.  Users can start
             # listening again by pressing the "Start Listening" button.
             pass
@@ -926,19 +926,19 @@ class MainWindow(QtWidgets.QMainWindow):
     # -----------------------------------------------------------------
     def _show_about(self) -> None:
         """
-        Display an About dialog with basic information about the
+        Display an About dialogue with basic information about the
         application, including its version and author.  The contents
         here can be customised to reflect project metadata.
         """
-        # Compose the about text as a single string.  Newlines are not
-        # permitted inside literal strings without escaping, so this is
-        # constructed with adjacent string literals.
+
         about_text = (
             "<h3>AudioKeys</h3>"
-            "<p>Map recorded sounds to keyboard keys in real time.</p>"
-            "<p>Developed by Lewis Morris (Arched dev).</p>"
-            "<p>See the <a href='https://github.com/lewis-morris/audiokeys'>project repository</a> "
-            "for documentation and source code.</p>"
+            "<p>Turn sound into action. Record distinctive audio samples and map them to key presses — "
+            "control your computer using just your voice or custom noises.</p>"
+            "<p>Built by Lewis Morris (Arched.dev), this project is fully open source.</p>"
+            "<p>Explore the code, report issues or contribute on "
+            "<a href='https://github.com/lewis-morris/audiokeys'>GitHub</a>. "
+            "Distributed under the MIT License.</p>"
         )
         QtWidgets.QMessageBox.about(
             self,
@@ -1243,7 +1243,7 @@ class SampleDialog(QtWidgets.QDialog):
         level = min(int(rms * 300.0), 100)
         self.level_bar.setValue(level)
 
-    def reject(self) -> None:  # noqa: D401 - close dialog
+    def reject(self) -> None:  # noqa: D401 - close dialogue
         if self._thread and self._thread.isRunning():
             self._thread.stop()
             self._thread.wait()
@@ -1277,7 +1277,7 @@ class KeySelectDialog(QtWidgets.QDialog):
     """
     Dialog for selecting a key mapping.  Presents a list of possible keys
     (letters, numbers and special names) so the user doesn’t have to type
-    free‑form text.  The dialog inherits the parent window’s icon and
+    free‑form text.  The dialogue inherits the parent window’s icon and
     displays the note name in its title.
     """
 
