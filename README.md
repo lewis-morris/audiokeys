@@ -18,8 +18,11 @@ detected.
 
 ## Download
 
-Pre‑built binaries for **Linux** and **Windows** are available on the
-[GitHub Releases](https://github.com/lewis-morris/audiokeys/releases) page.
+Pre-built binaries for **Linux** and **Windows** are available on the [GitHub Releases](https://github.com/lewis-morris/audiokeys/releases) page. Direct download links:
+
+- **Windows executable:** [Release: Windows](https://github.com/lewis-morris/audiokeys/releases/tag/Windows)  
+- **Linux executable:** [Release: linux](https://github.com/lewis-morris/audiokeys/releases/tag/linux)  
+
 No compilation or build tools are required.
 
 ## Usage
