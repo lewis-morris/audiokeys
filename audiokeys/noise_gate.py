@@ -122,4 +122,56 @@ def calculate_noise_floor(samples: np.ndarray, hop_size: int = HOP_SIZE) -> floa
     return float(np.median(rms_vals)) if rms_vals else 0.0
 
 
-__all__ = ["AdaptiveNoiseGate", "calculate_noise_floor"]
+def trim_silence(
+    samples: np.ndarray,
+    *,
+    hop_size: int = HOP_SIZE,
+    margin: float = NOISE_GATE_MARGIN,
+) -> np.ndarray:
+    """Remove leading and trailing silence from ``samples``.
+
+    The ambient noise floor is estimated using :func:`calculate_noise_floor`.
+    Blocks at the beginning and end of ``samples`` whose RMS level falls below
+    ``noise_floor * margin`` are discarded.  If the trimmed region would be
+    empty the original ``samples`` are returned unchanged.
+
+    Parameters
+    ----------
+    samples:
+        One-dimensional array of audio samples.
+    hop_size:
+        Number of samples per analysis block.
+    margin:
+        Multiplier applied to the noise floor when determining the silence
+        threshold.
+
+    Returns
+    -------
+    np.ndarray
+        Trimmed audio samples.
+    """
+
+    if samples.ndim != 1:
+        samples = samples.reshape(-1)
+    if samples.size == 0:
+        return samples
+
+    floor = calculate_noise_floor(samples, hop_size=hop_size)
+    threshold = floor * margin
+    if threshold <= 0.0:
+        return samples
+
+    blocks = np.array_split(samples, max(1, samples.size // hop_size))
+    rms_vals = [float(np.sqrt(np.mean(b**2))) for b in blocks]
+    active = [i for i, rms in enumerate(rms_vals) if rms >= threshold]
+    if not active:
+        return np.array([], dtype=samples.dtype)
+
+    start_block = active[0]
+    end_block = active[-1] + 1
+    start_idx = start_block * hop_size
+    end_idx = min(end_block * hop_size, samples.size)
+    return samples[start_idx:end_idx]
+
+
+__all__ = ["AdaptiveNoiseGate", "calculate_noise_floor", "trim_silence"]

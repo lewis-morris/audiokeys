@@ -63,14 +63,14 @@ try:
     from audiokeys.sound_worker import SoundWorker  # type: ignore
     from audiokeys.sample_matcher import record_until_silence  # type: ignore
     from audiokeys.utils import generate_sample_id, resource_path  # type: ignore
-    from audiokeys.noise_gate import calculate_noise_floor  # type: ignore
+    from audiokeys.noise_gate import calculate_noise_floor, trim_silence  # type: ignore
 except Exception:
     # Local fallback imports – only works when run from the project root
     import constants  # type: ignore
     from sound_worker import SoundWorker  # type: ignore
     from sample_matcher import record_until_silence  # type: ignore
     from utils import generate_sample_id, resource_path  # type: ignore
-    from noise_gate import calculate_noise_floor  # type: ignore
+    from noise_gate import calculate_noise_floor, trim_silence  # type: ignore
 
 # ─── Note ──────────────────────────────────────────────────────────────────
 # The audio capture and key mapping features are designed to work cross‑platform.
@@ -158,7 +158,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for sample_id, path in self.sample_files.items():
             p = Path(path)
             if p.exists():
-                self.samples[sample_id] = np.load(p)
+                sample = np.load(p)
+                self.samples[sample_id] = trim_silence(sample)
                 key = self.note_map.get(sample_id, "")
                 self._add_mapping_row(sample_id, key)
 
@@ -924,8 +925,10 @@ class SampleDialog(QtWidgets.QDialog):
             self._thread.wait()
             self._thread = None
         if sample.size:
-            self.samples.append(sample)
-            self.list_widget.addItem(f"Sample {len(self.samples)}")
+            trimmed = trim_silence(sample)
+            if trimmed.size:
+                self.samples.append(trimmed)
+                self.list_widget.addItem(f"Sample {len(self.samples)}")
         self.record_btn.setText("Record Sample")
 
     def _play_sample(self) -> None:
