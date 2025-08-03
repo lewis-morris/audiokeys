@@ -40,9 +40,6 @@ def match_sample(
     return None
 
 
-__all__ = ["cosine_similarity", "match_sample"]
-
-
 def record_until_silence(
     device_index: int,
     *,

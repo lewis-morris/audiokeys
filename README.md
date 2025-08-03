@@ -2,17 +2,18 @@
 
 **Version 0.1.0**
 
-PianoKeyboard transforms any instrument into a versatile input device by listening to your chosen
-audio source, detecting each played note in real time, and instantly translating it into a keystroke.
+AudioKeys transforms any sound into a versatile input device by listening to
+your chosen audio source and matching it against user‑recorded samples. When a
+match is found the corresponding keyboard key is pressed.
 
 ## Features
 
-- Real-time pitch detection using **aubio**.
-- Map each note in an octive to single-character keypresses.
+- Record custom sound samples and map them to single-character keypresses.
+- Assign multiple samples to the same key for more robust matching.
 - Support for **Linux** (uinput) and **Windows** (pynput) keyboard backends.
 - Select audio input device: microphone/line-in or system audio output (loopback/monitor).
 - Configurable key mapping via GUI.
-- Live log of detected and released notes.
+- Live log of detected sounds.
 - Cross-platform GUI built with **PySide6**.
 
 ## Download
@@ -29,18 +30,20 @@ Pre-built releases for Linux and Windows are available on the [GitHub Releases](
 
 ## Usage
 
-1. Launch **PianoKeyboard**.
-2. **Key Mapping:** Edit the single-character mappings for each note using the grid.
+1. Launch **AudioKeys**.
+2. Click **Add Key Mapping** to record a sample. Recording stops automatically
+   when silence is detected. Choose the keyboard key to associate with the
+   sound. Repeat to add more samples or variations for the same key.
 3. **Audio Input Device:** Choose between microphone/line-in or system output.
 4. **Audio Device:** Select the specific audio device from the dropdown.
-5. Click **Start Listening** to begin detecting notes. Detected notes will send keystrokes and appear in the log.
+5. Click **Start Listening** to begin matching sounds. Matches will send
+   keystrokes and appear in the log.
 6. Click **Stop Listening** to end.
-7. Use **Calibrate Selected Device** in Settings to measure background noise and
-   optionally run pitch calibration for more reliable note detection.
 
 ## Configuration Persistence
 
-Your key mappings and last-used audio device are saved automatically between sessions.
+Your recorded samples, key mappings and last-used audio device are saved
+automatically between sessions.
 
 ## Troubleshooting
 

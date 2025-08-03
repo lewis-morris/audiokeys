@@ -23,7 +23,7 @@ from .constants import (
     SAMPLE_RATE,
 )
 from .sample_matcher import match_sample
-from .audio_worker import AdaptiveNoiseGate
+from .noise_gate import AdaptiveNoiseGate
 
 
 class SoundWorker(QtCore.QThread):

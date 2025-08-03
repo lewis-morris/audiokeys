@@ -6,11 +6,14 @@ audiokeys — PySide 6
 
 from __future__ import annotations
 
+import json
 import sys
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
 from q_materialise import inject_style
+from appdirs import user_data_dir
 
 # ``sounddevice`` is used to enumerate audio capture devices and open
 # input streams.  If the module itself cannot be imported (e.g. it is
@@ -34,14 +37,14 @@ from PySide6.QtWidgets import QToolTip
 """
 Main Qt GUI for the AudioKeys application.
 
-This module constructs the user interface for mapping musical notes to key
-presses, selecting an audio capture device and viewing real‑time feedback
-from the audio processing thread.  The GUI is designed to run both when
-AudioKeys is installed as a package (e.g. via ``pip install audiokeys``)
-and when the source files are executed directly from a checkout.  To
-accommodate both scenarios it attempts to import other modules from the
-``audiokeys`` package first and falls back to relative imports on
-failure.
+This module constructs the user interface for mapping recorded sounds to
+key presses, selecting an audio capture device and viewing real‑time
+feedback from the audio processing thread.  The GUI is designed to run
+both when AudioKeys is installed as a package (e.g. via
+``pip install audiokeys``) and when the source files are executed
+directly from a checkout.  To accommodate both scenarios it attempts to
+import other modules from the ``audiokeys`` package first and falls back
+to relative imports on failure.
 
 The menu bar exposes ``File`` (with an Exit action), ``Settings``
 (opening a dialog to tweak audio parameters) and ``Help`` (providing
@@ -56,14 +59,12 @@ between launches without editing the ``constants.py`` file.
 # ``pip install -e .``.
 try:
     from audiokeys import constants  # type: ignore
-    from audiokeys import note_calibration  # type: ignore
     from audiokeys.sound_worker import SoundWorker  # type: ignore
     from audiokeys.sample_matcher import record_until_silence  # type: ignore
     from audiokeys.utils import resource_path  # type: ignore
 except Exception:
     # Local fallback imports – only works when run from the project root
     import constants  # type: ignore
-    import note_calibration  # type: ignore
     from sound_worker import SoundWorker  # type: ignore
     from sample_matcher import record_until_silence  # type: ignore
     from utils import resource_path  # type: ignore
@@ -89,12 +90,10 @@ list_playback_streams = None  # placeholder for removed functionality
 # one place.
 
 
-# ─── Key and audio workers are now defined in separate modules ─────────────
-# The ``KeySender`` class has been moved to ``key_sender.py`` and the
-# ``AudioWorker`` class (which manages audio capture, filtering and note
-# detection) has been moved to ``audio_worker.py``.  Importing the worker
-# at the top of this file provides the same interface as before without
-# coupling the GUI to the low‑level audio and input logic.
+# ─── Key and audio workers are defined in separate modules ─────────────
+# The ``KeySender`` class lives in ``key_sender.py`` and the audio capture
+# logic resides in ``sound_worker.py``.  Importing these modules at the top
+# keeps the GUI decoupled from the low‑level audio and input code.
 # ─── Main Window ──────────────────────────────────────────────────────────────
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
@@ -103,11 +102,16 @@ class MainWindow(QtWidgets.QMainWindow):
         # 1️⃣ create your QSettings (organisation, application)
         self.settings = QSettings("arched.dev", "audiokeys")
         self.setWindowTitle("Piano Keyboard")
-        # 2️⃣ load from settings, falling back to DEFAULT_NOTE_MAP
-        # note_map now stores custom sample identifiers → key names
+        # 2️⃣ mappings and persistent storage
+        # ``note_map`` stores sample identifiers → key names
         self.note_map: dict[str, str] = {}
         # recorded samples keyed by identifier
         self.samples: dict[str, np.ndarray] = {}
+        # file paths for each recorded sample
+        self.sample_files: dict[str, str] = {}
+        # application data directory for storing samples
+        self.data_dir = Path(user_data_dir("audiokeys", "arched.dev"))
+        self.data_dir.mkdir(parents=True, exist_ok=True)
 
         self.worker: Optional[SoundWorker] = None
 
@@ -125,8 +129,33 @@ class MainWindow(QtWidgets.QMainWindow):
         # Build the user interface
         self._build_ui()
 
+        # Load any previously recorded samples
+        self._load_samples()
+
         # Build menu bar with file, settings and help entries
         self._create_menu()
+
+    def _save_mappings(self) -> None:
+        """Persist sample metadata to ``QSettings``."""
+        self.settings.setValue("note_map", json.dumps(self.note_map))
+        self.settings.setValue("sample_files", json.dumps(self.sample_files))
+
+    def _load_samples(self) -> None:
+        """Load previously recorded samples from disk."""
+        map_json = self.settings.value("note_map", "{}")
+        files_json = self.settings.value("sample_files", "{}")
+        try:
+            self.note_map = json.loads(map_json)
+            self.sample_files = json.loads(files_json)
+        except Exception:
+            self.note_map = {}
+            self.sample_files = {}
+        for sample_id, path in self.sample_files.items():
+            p = Path(path)
+            if p.exists():
+                self.samples[sample_id] = np.load(p)
+                key = self.note_map.get(sample_id, "")
+                self._add_mapping_row(sample_id, key)
 
     def _make_heading(self, text: str):
         title = QtWidgets.QLabel(text)
@@ -243,7 +272,7 @@ class MainWindow(QtWidgets.QMainWindow):
         test_info_btn.setAutoRaise(True)
         test_info_btn.setToolTip(
             "<b>Test Listening</b><br><br>"
-            "When enabled, detected notes and pitches will be displayed\n"
+            "When enabled, detected sounds will be displayed\n"
             "in the log but no keyboard keys will be pressed.  Use this\n"
             "mode to experiment with detection settings without triggering\n"
             "any applications."
@@ -530,6 +559,10 @@ class MainWindow(QtWidgets.QMainWindow):
         sample_id = f"sample_{len(self.samples) + 1}"
         self.samples[sample_id] = sample
         self.note_map[sample_id] = key_name
+        path = self.data_dir / f"{sample_id}.npy"
+        np.save(path, sample)
+        self.sample_files[sample_id] = str(path)
+        self._save_mappings()
 
         self._add_mapping_row(sample_id, key_name)
 
@@ -548,7 +581,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         del_btn = QtWidgets.QPushButton("Delete")
         del_btn.clicked.connect(
-            lambda _=False, s=sample_id, l=row: self._delete_mapping(s, l)
+            lambda _=False, s=sample_id, layout=row: self._delete_mapping(s, layout)
         )
 
         row.addWidget(lbl)
@@ -570,6 +603,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.note_map[sample_id] = key
             if sample_id in self.key_labels:
                 self.key_labels[sample_id].setText(key)
+            self._save_mappings()
 
     def _record_again(self, sample_id: str) -> None:
         idx = self.device_combo.currentData()
@@ -579,6 +613,13 @@ class MainWindow(QtWidgets.QMainWindow):
         sample = record_until_silence(int(idx))
         if sample.size:
             self.samples[sample_id] = sample
+            path_str = self.sample_files.get(
+                sample_id, str(self.data_dir / f"{sample_id}.npy")
+            )
+            path = Path(path_str)
+            np.save(path, sample)
+            self.sample_files[sample_id] = str(path)
+            self._save_mappings()
 
     def _delete_mapping(self, sample_id: str, layout: QtWidgets.QHBoxLayout) -> None:
         if sample_id in self.samples:
@@ -587,6 +628,10 @@ class MainWindow(QtWidgets.QMainWindow):
             del self.note_map[sample_id]
         if sample_id in self.key_labels:
             del self.key_labels[sample_id]
+        path = self.sample_files.pop(sample_id, None)
+        if path:
+            Path(path).unlink(missing_ok=True)
+        self._save_mappings()
         # remove widget from layout
         item = layout.parentWidget()
         if item is not None:
@@ -605,11 +650,10 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         Slot invoked when the Test Listening checkbox is toggled.
 
-        When ``checked`` is True the application enters test mode: notes
-        and frequencies are still detected and shown in the log and
-        tuner display, but no keyboard keys are pressed.  The state is
-        persisted via ``QSettings``.  If a worker is running its
-        sender is toggled live.
+        When ``checked`` is True the application enters test mode: sounds
+        are still detected and shown in the log but no keyboard keys are
+        pressed.  The state is persisted via ``QSettings``.  If a worker
+        is running its sender is toggled live.
 
         Parameters
         ----------
@@ -651,9 +695,6 @@ class MainWindow(QtWidgets.QMainWindow):
         audio_action = settings_menu.addAction("Audio Parameters…")
         audio_action.triggered.connect(self._open_settings_dialog)
 
-        notes_action = settings_menu.addAction("Calibrate Notes…")
-        notes_action.triggered.connect(self._open_note_calibration)
-
         # Help menu providing docs and about
         help_menu = menubar.addMenu("Help")
         docs_action = help_menu.addAction("Visit Docs")
@@ -690,11 +731,6 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
 
     # -----------------------------------------------------------------
-    def _open_note_calibration(self) -> None:
-        """Open the note calibration dialog."""
-        dlg = NoteCalibrationDialog(self)
-        dlg.exec()
-
     # -----------------------------------------------------------------
     def _visit_docs(self) -> None:
         """
@@ -717,7 +753,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # constructed with adjacent string literals.
         about_text = (
             "<h3>AudioKeys</h3>"
-            "<p>Map musical notes to keyboard keys in real time.</p>"
+            "<p>Map recorded sounds to keyboard keys in real time.</p>"
             "<p>Developed by Lewis Morris (Arched dev).</p>"
             "<p>See the <a href='https://github.com/lewis-morris/audiokeys'>project repository</a> "
             "for documentation and source code.</p>"
@@ -828,17 +864,12 @@ class KeySelectDialog(QtWidgets.QDialog):
 
 
 class SettingsDialog(QtWidgets.QDialog):
-    """
-    Dialog allowing the user to adjust audio processing parameters.  Values
-    are persisted via QSettings and used when starting the AudioWorker.
-    Explanatory tooltips help users understand the impact of each parameter.
-    """
+    """Dialog allowing adjustment of basic audio parameters."""
 
     def __init__(self, parent: MainWindow) -> None:
         super().__init__(parent)
         self.parent_window = parent
         self.setWindowTitle("Audio Parameters")
-        # Use same icon as parent
         if parent.windowIcon():
             self.setWindowIcon(parent.windowIcon())
 
@@ -851,44 +882,17 @@ class SettingsDialog(QtWidgets.QDialog):
         def make_field(
             spinbox: QtWidgets.QDoubleSpinBox, description: str
         ) -> QtWidgets.QWidget:
-            """
-            Wrap a spin box together with a descriptive label in a
-            vertically stacked container.  This helper ensures that the
-            explanatory text is shown directly beneath the control,
-            improving discoverability over tooltips alone.
-
-            Parameters
-            ----------
-            spinbox : QDoubleSpinBox
-                The numeric control for the user to adjust.
-            description : str
-                A human‑readable explanation of what the control does.
-
-            Returns
-            -------
-            QWidget
-                A widget containing the spin box and its description.
-            """
             container = QtWidgets.QWidget()
             v = QtWidgets.QVBoxLayout(container)
             v.setContentsMargins(0, 0, 0, 0)
             v.addWidget(spinbox)
             desc = QtWidgets.QLabel(description)
             desc.setWordWrap(True)
-            # Use a smaller, grey font for descriptions
             font = desc.font()
             font.setPointSize(font.pointSize() - 1)
             desc.setFont(font)
             v.addWidget(desc)
             return container
-
-        # The noise gate duration parameter has been removed from the UI.  A
-        # calibrated noise floor obviates the need for a separate
-        # duration setting, so users no longer need to adjust it.  We
-        # still honour existing saved values for backwards
-        # compatibility, but no control is exposed here.  The default
-        # value from constants.py will be used when starting the
-        # AudioWorker.
 
         # Sample rate
         default_sr = int(settings.value("sample_rate", constants.SAMPLE_RATE))
@@ -900,7 +904,7 @@ class SettingsDialog(QtWidgets.QDialog):
             "Sample rate (Hz)",
             make_field(
                 self.sample_rate_spin,
-                "Audio sampling rate. Higher values improve accuracy at the cost of CPU usage.",
+                "Audio sampling rate. Higher values improve fidelity at the cost of CPU usage.",
             ),
         )
 
@@ -945,11 +949,11 @@ class SettingsDialog(QtWidgets.QDialog):
             "Noise gate margin",
             make_field(
                 self.gate_margin_spin,
-                "Multiplier applied to the measured noise floor; values above 1.0 make note detection less sensitive.",
+                "Multiplier applied to the measured noise floor; values above 1.0 make detection less sensitive.",
             ),
         )
 
-        # High‑pass filter cutoff
+        # High-pass filter cutoff
         default_hp_cutoff = float(
             settings.value("hp_cutoff", constants.HP_FILTER_CUTOFF)
         )
@@ -959,93 +963,13 @@ class SettingsDialog(QtWidgets.QDialog):
         self.hp_cutoff_spin.setDecimals(1)
         self.hp_cutoff_spin.setValue(default_hp_cutoff)
         form.addRow(
-            "High‑pass cutoff",
+            "High-pass cutoff",
             make_field(
                 self.hp_cutoff_spin,
-                "Cutoff frequency (Hz) of the high‑pass filter; frequencies below this are attenuated to remove rumble and hum.",
+                "Cutoff frequency (Hz) of the high-pass filter; frequencies below this are attenuated to remove rumble and hum.",
             ),
         )
 
-        # MIDI tolerance
-        default_midi_tol = float(
-            settings.value("midi_tolerance", constants.MIDI_SEMITONE_TOLERANCE)
-        )
-        self.midi_tol_spin = QtWidgets.QDoubleSpinBox()
-        self.midi_tol_spin.setRange(0.1, 2.0)
-        self.midi_tol_spin.setSingleStep(0.1)
-        self.midi_tol_spin.setDecimals(2)
-        self.midi_tol_spin.setValue(default_midi_tol)
-        form.addRow(
-            "Pitch tolerance",
-            make_field(
-                self.midi_tol_spin,
-                "Tolerance (in semitones) for pitch drift before a new note is considered; smaller values increase sensitivity.",
-            ),
-        )
-
-        # Minimum aubio pitch confidence
-        default_conf = float(
-            settings.value("confidence_threshold", constants.AUBIO_CONFIDENCE_THRESHOLD)
-        )
-        self.conf_thresh_spin = QtWidgets.QDoubleSpinBox()
-        self.conf_thresh_spin.setRange(0.0, 1.0)
-        self.conf_thresh_spin.setSingleStep(0.05)
-        self.conf_thresh_spin.setDecimals(2)
-        self.conf_thresh_spin.setValue(default_conf)
-        form.addRow(
-            "Min pitch confidence",
-            make_field(
-                self.conf_thresh_spin,
-                "Discard detected pitches whose aubio confidence is below this value (0–1).",
-            ),
-        )
-
-        # Detection method
-        # Available options map user‑friendly names to internal identifiers used by AudioWorker
-        self.detect_combo = QtWidgets.QComboBox()
-        # Define a list of (label, method) pairs
-        self._det_methods = [
-            ("Aubio (default)", "aubio"),
-            ("Aubio YIN", "yin"),
-            ("Aubio YIN FFT", "yinfft"),
-            ("FFT peak detection", "fft"),
-        ]
-        for label, _ in self._det_methods:
-            self.detect_combo.addItem(label)
-        # Restore previously selected method from settings or default
-        current_method = str(settings.value("detection_method", "aubio"))
-        # Find index by matching stored method
-        for idx, (_, method) in enumerate(self._det_methods):
-            if method == current_method:
-                self.detect_combo.setCurrentIndex(idx)
-                break
-        # Create a container with description text
-        det_container = QtWidgets.QWidget()
-        det_layout = QtWidgets.QVBoxLayout(det_container)
-        det_layout.setContentsMargins(0, 0, 0, 0)
-        det_layout.addWidget(self.detect_combo)
-        det_desc = QtWidgets.QLabel(
-            "Select the pitch detection algorithm. Aubio is robust across instruments; "
-            "YIN and YIN FFT are alternative Aubio methods; FFT uses a simple spectral peak finder."
-        )
-        det_desc.setWordWrap(True)
-        font = det_desc.font()
-        font.setPointSize(font.pointSize() - 1)
-        det_desc.setFont(font)
-        det_layout.addWidget(det_desc)
-        form.addRow("Detection method", det_container)
-
-        # Calibration button – placed after the form.  When calibration is
-        # running we change the label and disable all close controls to
-        # prevent the dialog from being closed prematurely.
-        self.calibrate_btn = QtWidgets.QPushButton("Calibrate Selected Device…")
-        self.calibrate_btn.clicked.connect(self._calibrate_device)
-        layout.addWidget(self.calibrate_btn)
-
-        # Dialog button box (OK/Cancel).  We store a reference so it can
-        # be disabled during calibration.  Without this reference the
-        # buttons would remain enabled and the dialog could be closed
-        # while calibration is in progress.
         self.buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
             QtCore.Qt.Horizontal,
@@ -1055,270 +979,11 @@ class SettingsDialog(QtWidgets.QDialog):
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
 
-        # Track whether a calibration is in progress.  This flag is
-        # consulted in closeEvent to ignore user attempts to close the
-        # dialog while the calibration is running.
-        self._calibrating: bool = False
-
     def accept(self) -> None:
-        # Persist user‑selected values
         settings = self.parent_window.settings
-        settings.setValue("noise_gate_margin", self.gate_margin_spin.value())
-        settings.setValue("hp_cutoff", self.hp_cutoff_spin.value())
-        settings.setValue("midi_tolerance", self.midi_tol_spin.value())
-        settings.setValue("confidence_threshold", self.conf_thresh_spin.value())
         settings.setValue("sample_rate", self.sample_rate_spin.value())
         settings.setValue("buffer_size", self.buffer_size_spin.value())
         settings.setValue("hop_size", self.hop_size_spin.value())
-        # Persist detection method
-        # Map current combo index to internal identifier
-        idx = self.detect_combo.currentIndex()
-        method = (
-            self._det_methods[idx][1] if 0 <= idx < len(self._det_methods) else "aubio"
-        )
-        settings.setValue("detection_method", method)
+        settings.setValue("noise_gate_margin", self.gate_margin_spin.value())
+        settings.setValue("hp_cutoff", self.hp_cutoff_spin.value())
         super().accept()
-
-    def _calibrate_device(self) -> None:
-        """Perform a ten‑second calibration of the currently selected audio device.
-
-        The calibration measures the ambient noise floor using the
-        selected input device and stores the result in the application
-        settings keyed by the device index.  A message is displayed
-        upon completion.
-        """
-        # Obtain the current device index from the parent window
-        device_idx = self.parent_window.device_combo.currentData()
-        if device_idx is None or device_idx == -1:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "No device selected",
-                "Please select an audio device in the main window before calibrating.",
-            )
-            return
-
-        # Determine channel count.  On Windows loopback the worker uses two channels.
-        channels = 1
-        try:
-            import sys as _sys  # local import to avoid polluting module namespace
-
-            if self.parent_window.capture_out.isChecked() and _sys.platform.startswith(
-                "win"
-            ):
-                channels = 2
-        except Exception:
-            channels = 1
-
-        # Inform the user and perform calibration in a blocking manner.  In a real
-        # application this could be moved to a worker thread with progress
-        # updates.  For simplicity we block the UI and warn the user to
-        # remain silent.  If the user cancels we return immediately.
-        confirm = QtWidgets.QMessageBox.information(
-            self,
-            "Calibrate Background Noise",
-            "The application will record background noise for 10 seconds.\n"
-            "Please ensure the room is quiet and no notes are played during this time.",
-            QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel,
-        )
-        if confirm != QtWidgets.QMessageBox.Ok:
-            return
-
-        # Begin calibration: update UI state and disable closing
-        self._calibrating = True
-        # Disable buttons and change label to indicate progress
-        self.calibrate_btn.setEnabled(False)
-        self.calibrate_btn.setText("Calibrating…")
-        if hasattr(self, "buttons"):
-            self.buttons.setEnabled(False)
-        # Process pending UI events so the button label and disabled
-        # state update before recording begins.  Without this call the
-        # UI may not reflect the state change until after the
-        # blocking calibration has finished.
-        QtWidgets.QApplication.processEvents()
-
-        try:
-            import numpy as _np
-            import sounddevice as _sd
-            from scipy.signal import butter, sosfilt
-
-            duration = 10.0  # seconds
-            sample_rate = int(
-                self.parent_window.settings.value("sample_rate", constants.SAMPLE_RATE)
-            )
-            # Record raw audio.  We avoid extra_settings and rely on the device
-            # configuration alone.  dtype float32 to match AudioWorker
-            recording = _sd.rec(
-                int(duration * sample_rate),
-                samplerate=sample_rate,
-                channels=channels,
-                device=int(device_idx),
-                dtype="float32",
-            )
-            _sd.wait()
-            # Down‑mix to mono
-            if recording.ndim == 2 and recording.shape[1] > 1:
-                mono = recording.mean(axis=1).astype("float32")
-            else:
-                mono = recording.reshape(-1).astype("float32")
-            # Apply a high‑pass filter using the current cutoff from settings
-            hp_cutoff = float(
-                self.parent_window.settings.value(
-                    "hp_cutoff", constants.HP_FILTER_CUTOFF
-                )
-            )
-            nyquist = sample_rate / 2.0
-            norm_cut = max(min(hp_cutoff / nyquist, 0.99), 0.001)
-            sos = butter(2, norm_cut, btype="highpass", output="sos")
-            filtered = sosfilt(sos, mono)
-            # Compute RMS values per hop and take the median as noise floor
-            hop_size = int(
-                self.parent_window.settings.value("hop_size", constants.HOP_SIZE)
-            )
-            rms_vals: list[float] = []
-            for start in range(0, len(filtered), hop_size):
-                block = filtered[start : start + hop_size]
-                if block.size == 0:
-                    continue
-                rms = float(_np.sqrt(_np.mean(block**2)))
-                rms_vals.append(rms)
-            if not rms_vals:
-                QtWidgets.QMessageBox.warning(
-                    self,
-                    "Calibration failed",
-                    "Unable to compute RMS values for calibration.",
-                )
-                return
-            noise_floor = float(_np.median(rms_vals))
-            # Persist noise floor keyed by device index
-            key = f"noise_floor_{device_idx}"
-            self.parent_window.settings.setValue(key, noise_floor)
-            QtWidgets.QMessageBox.information(
-                self,
-                "Calibration complete",
-                f"Noise floor calibrated at {noise_floor:.6f} RMS for device {device_idx}.\n"
-                "This value will be used for future sessions with this device.",
-            )
-        except Exception as e:
-            QtWidgets.QMessageBox.warning(
-                self, "Calibration error", f"An error occurred during calibration:\n{e}"
-            )
-        finally:
-            # Restore UI state regardless of success/failure
-            self._calibrating = False
-            self.calibrate_btn.setEnabled(True)
-            self.calibrate_btn.setText("Calibrate Selected Device…")
-            if hasattr(self, "buttons"):
-                self.buttons.setEnabled(True)
-
-    # -----------------------------------------------------------------
-    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        """
-        Prevent closing the settings dialog while a calibration
-        recording is running.  If the calibration flag is set the
-        event is ignored.  Otherwise the base class implementation
-        handles the close normally.
-        """
-        # If calibration is in progress ignore the close request
-        if getattr(self, "_calibrating", False):
-            event.ignore()
-            return
-        super().closeEvent(event)
-
-
-class NoteCalibrationDialog(QtWidgets.QDialog):
-    """Dialog guiding the user through note calibration."""
-
-    def __init__(self, parent: MainWindow) -> None:
-        super().__init__(parent)
-        self.parent_window = parent
-        self.setWindowTitle("Calibrate Notes")
-        if parent.windowIcon():
-            self.setWindowIcon(parent.windowIcon())
-
-        self.status = QtWidgets.QLabel("Click Start to record each note in octave 4.")
-        self.start_btn = QtWidgets.QPushButton("Start")
-        self.start_btn.clicked.connect(self._start)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(self.status)
-        layout.addWidget(self.start_btn)
-
-    def _start(self) -> None:
-        device_idx = self.parent_window.device_combo.currentData()
-        if device_idx is None or device_idx == -1:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "No device selected",
-                "Please select an audio device in the main window before calibrating.",
-            )
-            return
-
-        sample_rate = int(
-            self.parent_window.settings.value("sample_rate", constants.SAMPLE_RATE)
-        )
-        hop_size = int(
-            self.parent_window.settings.value("hop_size", constants.HOP_SIZE)
-        )
-
-        channels = 1
-        try:
-            import sys as _sys
-
-            if self.parent_window.capture_out.isChecked() and _sys.platform.startswith(
-                "win"
-            ):
-                channels = 2
-        except Exception:
-            channels = 1
-
-        def record_func(
-            note: str,
-            duration: float,
-            rate: int,
-            ch: int,
-            dev: Optional[int],
-        ) -> np.ndarray:
-            self.status.setText(f"Recording {note}…")
-            QtWidgets.QApplication.processEvents()
-            data = sd.rec(
-                int(duration * rate),
-                samplerate=rate,
-                channels=ch,
-                device=dev,
-                dtype="float32",
-            )
-            sd.wait()
-            if data.ndim > 1:
-                data = data.mean(axis=1)
-            return data.reshape(-1)
-
-        self.start_btn.setEnabled(False)
-        QtWidgets.QApplication.processEvents()
-
-        try:
-            results = note_calibration.calibrate_pitches(
-                constants.NOTE_NAMES,
-                duration=1.0,
-                sample_rate=sample_rate,
-                hop_size=hop_size,
-                channels=channels,
-                octave=4,
-                device=int(device_idx),
-                record_func=record_func,
-                interactive=False,
-            )
-            tol = note_calibration.calculate_midi_tolerance(results)
-            self.parent_window.settings.setValue("midi_tolerance", tol)
-            QtWidgets.QMessageBox.information(
-                self,
-                "Calibration complete",
-                f"Recommended pitch tolerance: {tol:.2f} semitones.\n"
-                "This value has been saved for future sessions.",
-            )
-        except Exception as e:
-            QtWidgets.QMessageBox.warning(
-                self, "Calibration error", f"An error occurred during calibration:\n{e}"
-            )
-        finally:
-            self.status.clear()
-            self.start_btn.setEnabled(True)
