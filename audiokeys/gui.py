@@ -496,7 +496,9 @@ class MainWindow(QtWidgets.QMainWindow):
         sample_rate = int(self.settings.value("sample_rate", constants.SAMPLE_RATE))
         buffer_size = int(self.settings.value("buffer_size", constants.BUFFER_SIZE))
         hop_size = int(self.settings.value("hop_size", constants.HOP_SIZE))
-        _ = str(self.settings.value("detection_method", "aubio"))
+        match_method = str(
+            self.settings.value("detection_method", constants.MATCH_METHOD)
+        )
         noise_floor_key = f"noise_floor_{idx}"
         noise_floor_val = self.settings.value(noise_floor_key, None)
         preset_floor = None
@@ -523,6 +525,7 @@ class MainWindow(QtWidgets.QMainWindow):
             noise_gate_margin=gate_margin,
             preset_noise_floor=preset_floor,
             match_threshold=match_thresh,
+            match_method=match_method,
             send_enabled=not getattr(self, "test_mode", False),
         )
         self.worker.keyDetected.connect(self._on_key_detected)
@@ -1016,21 +1019,37 @@ class SampleDialog(QtWidgets.QDialog):
 
             parent = self.parent()
             settings = parent.settings if hasattr(parent, "settings") else None
-            sample_rate = int(
-                settings.value("sample_rate", constants.SAMPLE_RATE)
-            ) if settings else constants.SAMPLE_RATE
-            buffer_size = int(
-                settings.value("buffer_size", constants.BUFFER_SIZE)
-            ) if settings else constants.BUFFER_SIZE
-            gate_margin = float(
-                settings.value("noise_gate_margin", constants.NOISE_GATE_MARGIN)
-            ) if settings else constants.NOISE_GATE_MARGIN
-            hp_cutoff = float(
-                settings.value("hp_cutoff", constants.HP_FILTER_CUTOFF)
-            ) if settings else constants.HP_FILTER_CUTOFF
-            match_thresh = float(
-                settings.value("match_threshold", constants.MATCH_THRESHOLD)
-            ) if settings else constants.MATCH_THRESHOLD
+            sample_rate = (
+                int(settings.value("sample_rate", constants.SAMPLE_RATE))
+                if settings
+                else constants.SAMPLE_RATE
+            )
+            buffer_size = (
+                int(settings.value("buffer_size", constants.BUFFER_SIZE))
+                if settings
+                else constants.BUFFER_SIZE
+            )
+            gate_margin = (
+                float(settings.value("noise_gate_margin", constants.NOISE_GATE_MARGIN))
+                if settings
+                else constants.NOISE_GATE_MARGIN
+            )
+            hp_cutoff = (
+                float(settings.value("hp_cutoff", constants.HP_FILTER_CUTOFF))
+                if settings
+                else constants.HP_FILTER_CUTOFF
+            )
+            match_thresh = (
+                float(settings.value("match_threshold", constants.MATCH_THRESHOLD))
+                if settings
+                else constants.MATCH_THRESHOLD
+            )
+
+            match_method = (
+                str(settings.value("detection_method", constants.MATCH_METHOD))
+                if settings
+                else constants.MATCH_METHOD
+            )
 
             noise_floor_key = f"noise_floor_{self.device_index}"
             preset_floor = None
@@ -1059,6 +1078,7 @@ class SampleDialog(QtWidgets.QDialog):
                 noise_gate_margin=gate_margin,
                 preset_noise_floor=preset_floor,
                 match_threshold=match_thresh,
+                match_method=match_method,
                 send_enabled=False,
             )
             self._test_worker.keyDetected.connect(self._on_test_detected)
@@ -1269,6 +1289,20 @@ class SettingsDialog(QtWidgets.QDialog):
             ),
         )
 
+        # Detection method
+        default_method = str(settings.value("detection_method", constants.MATCH_METHOD))
+        self.method_combo = QtWidgets.QComboBox()
+        self.method_combo.addItems(["waveform", "mfcc", "dtw"])
+        if default_method in ("waveform", "mfcc", "dtw"):
+            self.method_combo.setCurrentText(default_method)
+        form.addRow(
+            "Detection method",
+            make_field(
+                self.method_combo,
+                "Algorithm used to compare recorded samples.",
+            ),
+        )
+
         # Match threshold
         default_match = float(
             settings.value("match_threshold", constants.MATCH_THRESHOLD)
@@ -1321,6 +1355,7 @@ class SettingsDialog(QtWidgets.QDialog):
         settings.setValue("sample_rate", self.sample_rate_spin.value())
         settings.setValue("buffer_size", self.buffer_size_spin.value())
         settings.setValue("noise_gate_margin", self.gate_margin_spin.value())
+        settings.setValue("detection_method", self.method_combo.currentText())
         settings.setValue("match_threshold", self.match_thresh_spin.value())
         settings.setValue("hp_cutoff", self.hp_cutoff_spin.value())
         super().accept()

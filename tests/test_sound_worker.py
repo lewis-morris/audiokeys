@@ -11,6 +11,7 @@ import types
 
 sys.modules.setdefault("sounddevice", types.SimpleNamespace())
 
+
 class _DummySignal:
     def __init__(self, *_, **__):
         self._subs: list[object] = []
@@ -82,4 +83,3 @@ def test_match_threshold_respected(monkeypatch: pytest.MonkeyPatch) -> None:
     worker.buffer = deque([sample])
     worker._process_segment()
     assert worker.sender.pressed == ["x"]
-
