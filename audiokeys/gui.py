@@ -61,13 +61,13 @@ try:
     from audiokeys import constants  # type: ignore
     from audiokeys.sound_worker import SoundWorker  # type: ignore
     from audiokeys.sample_matcher import record_until_silence  # type: ignore
-    from audiokeys.utils import resource_path  # type: ignore
+    from audiokeys.utils import generate_sample_id, resource_path  # type: ignore
 except Exception:
     # Local fallback imports – only works when run from the project root
     import constants  # type: ignore
     from sound_worker import SoundWorker  # type: ignore
     from sample_matcher import record_until_silence  # type: ignore
-    from utils import resource_path  # type: ignore
+    from utils import generate_sample_id, resource_path  # type: ignore
 
 # ─── Note ──────────────────────────────────────────────────────────────────
 # The audio capture and key mapping features are designed to work cross‑platform.
@@ -539,32 +539,54 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.ensureCursorVisible()
 
     # -----------------------------------------------------------------
+    def _record_sample_dialog(self, device_index: int) -> np.ndarray:
+        """Record a single sample using a modal dialog.
+
+        Parameters
+        ----------
+        device_index:
+            Index of the audio device to record from.
+
+        Returns
+        -------
+        np.ndarray
+            Recorded audio data.  If recording was cancelled, an empty
+            array is returned.
+        """
+
+        dlg = RecordingDialog(self, device_index)
+        if dlg.exec() == QtWidgets.QDialog.Accepted:
+            return dlg.get_sample()
+        return np.array([], dtype=np.float32)
+
+    # -----------------------------------------------------------------
     # Key selection
     def _add_mapping(self) -> None:
-        """Record a new sound and map it to a keyboard key."""
+        """Record one or more samples and map them to a keyboard key."""
         idx = self.device_combo.currentData()
         if idx is None:
             QtWidgets.QMessageBox.warning(self, "No device", "Select an audio device.")
             return
 
-        sample = record_until_silence(int(idx))
-        if sample.size == 0:
-            QtWidgets.QMessageBox.warning(self, "No sound", "No audio was recorded.")
+        key_dlg = KeySelectDialog(self, "sound", "")
+        if key_dlg.exec() != QtWidgets.QDialog.Accepted:
+            return
+        key_name = key_dlg.get_selected_key()
+
+        samp_dlg = SampleDialog(self, int(idx))
+        if samp_dlg.exec() != QtWidgets.QDialog.Accepted:
             return
 
-        dlg = KeySelectDialog(self, "sound", "")
-        if dlg.exec() != QtWidgets.QDialog.Accepted:
-            return
-        key_name = dlg.get_selected_key()
-        sample_id = f"sample_{len(self.samples) + 1}"
-        self.samples[sample_id] = sample
-        self.note_map[sample_id] = key_name
-        path = self.data_dir / f"{sample_id}.npy"
-        np.save(path, sample)
-        self.sample_files[sample_id] = str(path)
+        base = samp_dlg.get_name()
+        for sample in samp_dlg.samples:
+            sample_id = generate_sample_id(base, self.samples.keys())
+            self.samples[sample_id] = sample
+            self.note_map[sample_id] = key_name
+            path = self.data_dir / f"{sample_id}.npy"
+            np.save(path, sample)
+            self.sample_files[sample_id] = str(path)
+            self._add_mapping_row(sample_id, key_name)
         self._save_mappings()
-
-        self._add_mapping_row(sample_id, key_name)
 
     def _add_mapping_row(self, sample_id: str, key_name: str) -> None:
         row = QtWidgets.QHBoxLayout()
@@ -610,7 +632,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if idx is None:
             QtWidgets.QMessageBox.warning(self, "No device", "Select an audio device.")
             return
-        sample = record_until_silence(int(idx))
+
+        sample = self._record_sample_dialog(int(idx))
         if sample.size:
             self.samples[sample_id] = sample
             path_str = self.sample_files.get(
@@ -784,6 +807,108 @@ def run_gui():
 
 
 # ─── Dialogs ────────────────────────────────────────────────────────────────
+
+
+class RecordingThread(QtCore.QThread):
+    """Background thread that records audio using ``record_until_silence``."""
+
+    recorded = QtCore.Signal(np.ndarray)
+
+    def __init__(self, device_index: int) -> None:
+        super().__init__()
+        self.device_index = device_index
+
+    def run(self) -> None:  # noqa: D401 - simple delegator
+        sample = record_until_silence(self.device_index)
+        self.recorded.emit(sample)
+
+
+class RecordingDialog(QtWidgets.QDialog):
+    """Modal dialog that displays a recording indicator."""
+
+    def __init__(self, parent: QtWidgets.QWidget, device_index: int) -> None:
+        super().__init__(parent)
+        self._sample = np.array([], dtype=np.float32)
+        self.setWindowTitle("Recording…")
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(QtWidgets.QLabel("Recording…"))
+        self.thread = RecordingThread(device_index)
+        self.thread.recorded.connect(self._on_recorded)
+        self.thread.start()
+
+    def _on_recorded(self, sample: np.ndarray) -> None:
+        self._sample = sample
+        self.accept()
+
+    def get_sample(self) -> np.ndarray:
+        """Return the recorded sample once the dialog closes."""
+        return self._sample
+
+
+class SampleDialog(QtWidgets.QDialog):
+    """Dialog for naming a sound and recording multiple samples."""
+
+    def __init__(self, parent: QtWidgets.QWidget, device_index: int) -> None:
+        super().__init__(parent)
+        self.device_index = device_index
+        self.samples: list[np.ndarray] = []
+        self.setWindowTitle("Record Samples")
+        layout = QtWidgets.QVBoxLayout(self)
+
+        name_layout = QtWidgets.QHBoxLayout()
+        name_layout.addWidget(QtWidgets.QLabel("Sound name:"))
+        self.name_edit = QtWidgets.QLineEdit()
+        name_layout.addWidget(self.name_edit)
+        layout.addLayout(name_layout)
+
+        self.list_widget = QtWidgets.QListWidget()
+        layout.addWidget(self.list_widget)
+
+        self.record_btn = QtWidgets.QPushButton("Record Sample")
+        self.record_btn.clicked.connect(self._record_sample)
+        layout.addWidget(self.record_btn)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            QtCore.Qt.Horizontal,
+            self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    # ------------------------------------------------------------------
+    def _record_sample(self) -> None:
+        self.record_btn.setEnabled(False)
+        self.record_btn.setText("Recording…")
+        thread = RecordingThread(self.device_index)
+        thread.recorded.connect(lambda s: self._on_recorded(s, thread))
+        thread.start()
+
+    def _on_recorded(self, sample: np.ndarray, thread: RecordingThread) -> None:
+        thread.quit()
+        thread.wait()
+        self.samples.append(sample)
+        self.list_widget.addItem(f"Sample {len(self.samples)}")
+        self.record_btn.setEnabled(True)
+        self.record_btn.setText("Record Sample")
+
+    def accept(self) -> None:
+        if not self.samples:
+            QtWidgets.QMessageBox.warning(
+                self, "No samples", "Record at least one sample."
+            )
+            return
+        if not self.name_edit.text().strip():
+            QtWidgets.QMessageBox.warning(self, "No name", "Provide a sound name.")
+            return
+        super().accept()
+
+    def get_name(self) -> str:
+        """Return the user-provided sound name."""
+        return self.name_edit.text().strip()
+
+
 class KeySelectDialog(QtWidgets.QDialog):
     """
     Dialog for selecting a key mapping.  Presents a list of possible keys

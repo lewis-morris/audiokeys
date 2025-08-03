@@ -1,8 +1,9 @@
 import getpass
+import os
+import subprocess
 import sys
 import tempfile
-import subprocess
-import os
+from collections.abc import Iterable
 
 
 def elevate_and_setup_uinput():
@@ -68,3 +69,38 @@ def resource_path(relative_path: str) -> str:
         base_path = os.path.abspath(os.path.dirname(__file__))
 
     return os.path.join(base_path, relative_path)
+
+
+def generate_sample_id(base: str, existing: Iterable[str]) -> str:
+    """Return a unique sample identifier.
+
+    The identifier takes the form ``"{base}_{n}"`` where ``n`` is the lowest
+    positive integer that does not collide with ``existing``.
+
+    Parameters
+    ----------
+    base:
+        Base name provided by the user, e.g. ``"tap"``.
+    existing:
+        Collection of identifiers already in use.
+
+    Returns
+    -------
+    str
+        A unique identifier incorporating ``base``.
+    """
+
+    # Ensure the base is safe for filenames by stripping whitespace and
+    # replacing internal spaces with underscores.  This keeps saved ``.npy``
+    # files consistent across platforms.
+    safe_base = base.strip().replace(" ", "_") or "sample"
+    index = 1
+    candidate = f"{safe_base}_{index}"
+    existing_set = set(existing)
+    while candidate in existing_set:
+        index += 1
+        candidate = f"{safe_base}_{index}"
+    return candidate
+
+
+__all__ = ["elevate_and_setup_uinput", "resource_path", "generate_sample_id"]
