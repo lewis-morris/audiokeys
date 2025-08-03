@@ -92,4 +92,34 @@ class AdaptiveNoiseGate:
         return rms < (self.noise_floor * self.margin)
 
 
-__all__ = ["AdaptiveNoiseGate"]
+def calculate_noise_floor(samples: np.ndarray, hop_size: int = HOP_SIZE) -> float:
+    """Estimate the ambient noise floor for ``samples``.
+
+    The input is split into consecutive blocks of ``hop_size`` samples and the
+    root‑mean‑square (RMS) is computed for each block.  The median RMS is
+    returned as a robust estimate of the background level.
+
+    Parameters
+    ----------
+    samples:
+        One‑dimensional array of audio samples.
+    hop_size:
+        Number of samples per analysis block.
+
+    Returns
+    -------
+    float
+        Estimated noise floor or ``0.0`` if ``samples`` is empty.
+    """
+
+    if samples.ndim != 1:
+        samples = samples.reshape(-1)
+    if samples.size == 0:
+        return 0.0
+
+    blocks = np.array_split(samples, max(1, samples.size // hop_size))
+    rms_vals = [float(np.sqrt(np.mean(b**2))) for b in blocks if b.size]
+    return float(np.median(rms_vals)) if rms_vals else 0.0
+
+
+__all__ = ["AdaptiveNoiseGate", "calculate_noise_floor"]
