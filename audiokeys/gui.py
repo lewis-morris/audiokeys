@@ -174,7 +174,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # 1️⃣ create your QSettings (organisation, application)
         self.settings = QSettings("arched.dev", "audiokeys")
-        self.setWindowTitle("Piano Keyboard")
+        self.setWindowTitle("AudioKeys")
         # 2️⃣ mappings and persistent storage
         # ``note_map`` stores sample identifiers → key names
         self.note_map: dict[str, str] = {}
