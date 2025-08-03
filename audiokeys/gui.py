@@ -610,7 +610,7 @@ class MainWindow(QtWidgets.QMainWindow):
         change_btn.clicked.connect(lambda _=False, s=sample_id: self._change_key(s))
 
         edit_btn = QtWidgets.QToolButton()
-        edit_btn.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaRecord))
+        edit_btn.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaPlay))
         edit_btn.setAutoRaise(True)
         edit_btn.setToolTip("Edit Samples")
         edit_btn.clicked.connect(lambda _=False, s=sample_id: self._record_again(s))
@@ -820,7 +820,7 @@ def run_gui():
     )
     app = QtWidgets.QApplication(sys.argv)
 
-    inject_style(app, style="tangerine_morning")
+    inject_style(app, style="crimson_depth")
 
     icon_file = resource_path("assets/icon.ico")
     icon = QIcon(icon_file)
