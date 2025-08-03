@@ -35,6 +35,17 @@ from PySide6.QtCore import QPoint, QSettings
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QToolTip
 
+
+import sys
+
+# only import splash when frozen
+pyi_splash = None
+if getattr(sys, "frozen", False):
+    try:
+        import pyi_splash
+    except ImportError:
+        pyi_splash = None
+
 """
 Main Qt GUI for the AudioKeys application.
 
@@ -1028,6 +1039,18 @@ def run_gui():
     app.setWindowIcon(icon)
     win = MainWindow()
     win.show()
+
+    # close PyInstaller splash (only if in frozen EXE)
+    if pyi_splash:
+        QtCore.QTimer.singleShot(
+            0,
+            lambda: (
+                pyi_splash.close(),
+                win.raise_(),
+                win.activateWindow(),
+            ),
+        )
+
     sys.exit(app.exec())
 
 
