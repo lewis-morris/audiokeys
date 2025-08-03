@@ -147,26 +147,53 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.setValue("sample_files", json.dumps(self.sample_files))
 
     def _load_samples(self) -> None:
-        """Load previously recorded samples from disk."""
+        """Load previously recorded samples from disk, pruning missing or invalid ones."""
         map_json = self.settings.value("note_map", "{}")
         files_json = self.settings.value("sample_files", "{}")
         try:
-            self.note_map = json.loads(map_json)
-            self.sample_files = json.loads(files_json)
+            raw_note_map = json.loads(map_json)
+            raw_sample_files = json.loads(files_json)
         except Exception:
-            self.note_map = {}
-            self.sample_files = {}
-        for sample_id, paths in self.sample_files.items():
+            raw_note_map = {}
+            raw_sample_files = {}
+
+        cleaned_note_map: dict[str, str] = {}
+        cleaned_sample_files: dict[str, list[str]] = {}
+
+        for sample_id, paths in raw_sample_files.items():
             loaded: list[np.ndarray] = []
+            valid_paths: list[str] = []
             for path in paths:
                 p = Path(path)
-                if p.exists():
+                if not p.exists():
+                    # file was deleted manually; skip it
+                    continue
+                try:
                     sample = np.load(p)
-                    loaded.append(trim_silence(sample))
+                except Exception as e:
+                    # log corrupted / unreadable file and skip it
+                    self._append_log(f"Failed to load sample {p!s}: {e}")
+                    continue
+                trimmed = trim_silence(sample)
+                if trimmed.size:
+                    loaded.append(trimmed)
+                    valid_paths.append(str(p))
             if loaded:
+                # retain this mapping
                 self.samples[sample_id] = loaded
-                key = self.note_map.get(sample_id, "")
+                key = raw_note_map.get(sample_id, "")
                 self._add_mapping_row(sample_id, key)
+                cleaned_sample_files[sample_id] = valid_paths
+                if sample_id in raw_note_map:
+                    cleaned_note_map[sample_id] = raw_note_map[sample_id]
+            else:
+                # no valid samples left; drop mapping and per-note setting
+                self.settings.remove(sample_id)
+
+        # Replace with cleaned versions and persist
+        self.note_map = cleaned_note_map
+        self.sample_files = cleaned_sample_files
+        self._save_mappings()
 
     def _make_heading(self, text: str):
         title = QtWidgets.QLabel(text)
@@ -466,15 +493,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings.value("noise_gate_margin", constants.NOISE_GATE_MARGIN)
         )
         hp_cutoff = float(self.settings.value("hp_cutoff", constants.HP_FILTER_CUTOFF))
-        # Retrieve user‑tuned parameters
-        _ = float(
-            self.settings.value("midi_tolerance", constants.MIDI_SEMITONE_TOLERANCE)
-        )
-        _ = float(
-            self.settings.value(
-                "confidence_threshold", constants.AUBIO_CONFIDENCE_THRESHOLD
-            )
-        )
         sample_rate = int(self.settings.value("sample_rate", constants.SAMPLE_RATE))
         buffer_size = int(self.settings.value("buffer_size", constants.BUFFER_SIZE))
         hop_size = int(self.settings.value("hop_size", constants.HOP_SIZE))
