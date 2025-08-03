@@ -44,7 +44,7 @@ hiddenimports += ["PySide6.QtSvg"]
 binaries += collect_dynamic_libs("sounddevice")
 # aubio may or may not ship shared libs; harmless if none:
 binaries += collect_dynamic_libs("aubio")
-
+binaries += collect_dynamic_libs("uinput")
 
 # ─── Analysis ───────────────────────────────────────────────────
 a = Analysis(
