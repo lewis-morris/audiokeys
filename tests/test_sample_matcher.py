@@ -45,6 +45,41 @@ def test_match_sample_handles_multiple_refs() -> None:
     assert key == "x"
 
 
+def _sine(freq: float, sr: int = 8000, dur: float = 0.1) -> np.ndarray:
+    t = np.linspace(0, dur, int(sr * dur), endpoint=False)
+    return np.sin(2 * np.pi * freq * t).astype(np.float32)
+
+
+def test_match_sample_mfcc() -> None:
+    sr = 8000
+    ref_a = _sine(440, sr)
+    ref_b = _sine(660, sr)
+    segment = _sine(660, sr)
+    key = match_sample(
+        segment,
+        {"a": [ref_a], "b": [ref_b]},
+        threshold=0.5,
+        method="mfcc",
+        sample_rate=sr,
+    )
+    assert key == "b"
+
+
+def test_match_sample_dtw() -> None:
+    sr = 8000
+    ref_a = _sine(440, sr)
+    ref_b = _sine(660, sr)
+    segment = _sine(440, sr)
+    key = match_sample(
+        segment,
+        {"a": [ref_a], "b": [ref_b]},
+        threshold=0.5,
+        method="dtw",
+        sample_rate=sr,
+    )
+    assert key == "a"
+
+
 def test_record_until_silence_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     class DummyStream:
         def __enter__(self) -> "DummyStream":

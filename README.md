@@ -13,6 +13,7 @@ match is found the corresponding keyboard key is pressed.
 - Support for **Linux** (uinput) and **Windows** (pynput) keyboard backends.
 - Select audio input device: microphone/line-in or system audio output (loopback/monitor).
 - Configurable key mapping via GUI.
+- Choose between waveform, MFCC or DTW matching algorithms.
 - Live log of detected sounds.
 - Cross-platform GUI built with **PySide6**.
 

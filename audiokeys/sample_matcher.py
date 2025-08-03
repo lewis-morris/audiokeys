@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Optional, Sequence
+from typing import Iterable, Literal, Mapping, Optional, Sequence
 
 import numpy as np
 import threading
+import librosa
+
+# Supported matching techniques
+DetectionMethod = Literal["waveform", "mfcc", "dtw"]
 
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -22,11 +26,30 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (a_norm * b_norm))
 
 
+def _mfcc_mean(samples: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Return the mean MFCC vector for ``samples``."""
+
+    mfcc = librosa.feature.mfcc(y=samples, sr=sample_rate, n_mfcc=13)
+    return mfcc.mean(axis=1)
+
+
+def _dtw_mfcc_similarity(a: np.ndarray, b: np.ndarray, sample_rate: int) -> float:
+    """Return similarity based on DTW distance between MFCC sequences."""
+
+    mfcc_a = librosa.feature.mfcc(y=a, sr=sample_rate, n_mfcc=13)
+    mfcc_b = librosa.feature.mfcc(y=b, sr=sample_rate, n_mfcc=13)
+    dist, _ = librosa.sequence.dtw(mfcc_a, mfcc_b, metric="cosine")
+    final = float(dist[-1, -1])
+    return 1.0 / (1.0 + final)
+
+
 def match_sample(
     segment: np.ndarray,
     samples: Mapping[str, Sequence[np.ndarray] | np.ndarray],
     *,
     threshold: float = 0.8,
+    method: DetectionMethod = "waveform",
+    sample_rate: int = 44_100,
 ) -> Optional[str]:
     """Return the mapping key with the highest similarity to ``segment``.
 
@@ -35,6 +58,10 @@ def match_sample(
         samples: Mapping from sample identifier to one or more reference
             samples.
         threshold: Minimum similarity score required to return a match.
+        method: Technique used for comparison. ``"waveform"`` performs raw
+            cosine similarity, ``"mfcc"`` compares averaged MFCC vectors and
+            ``"dtw"`` uses Dynamic Time Warping over MFCC sequences.
+        sample_rate: Sample rate of ``segment`` and references.
 
     Returns:
         The identifier of the best-matching sample or ``None`` if no match
@@ -42,14 +69,28 @@ def match_sample(
     """
     best_key: Optional[str] = None
     best_score: float = 0.0
+    # Pre-compute segment features depending on the method
+    if method == "mfcc":
+        segment_feat = _mfcc_mean(segment, sample_rate)
+    elif method == "dtw":
+        segment_feat = segment  # placeholder; DTW computes internally
+    else:
+        segment_feat = segment
     for key, refs in samples.items():
-        # Normalise refs to an iterable of arrays
         if isinstance(refs, np.ndarray):
             iterable: Iterable[np.ndarray] = (refs,)
         else:
             iterable = refs
         for ref in iterable:
-            score = cosine_similarity(segment, ref)
+            if method == "waveform":
+                score = cosine_similarity(segment_feat, ref)
+            elif method == "mfcc":
+                ref_feat = _mfcc_mean(ref, sample_rate)
+                score = cosine_similarity(segment_feat, ref_feat)
+            elif method == "dtw":
+                score = _dtw_mfcc_similarity(segment_feat, ref, sample_rate)
+            else:  # pragma: no cover - validated by type
+                raise ValueError(f"Unknown method: {method}")
             if score > best_score:
                 best_score = score
                 best_key = key

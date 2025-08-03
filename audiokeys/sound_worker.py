@@ -23,7 +23,7 @@ from .constants import (
     MATCH_THRESHOLD,
     SAMPLE_RATE,
 )
-from .sample_matcher import match_sample
+from .sample_matcher import DetectionMethod, match_sample
 from .noise_gate import AdaptiveNoiseGate
 
 
@@ -49,9 +49,30 @@ class SoundWorker(QtCore.QThread):
         noise_gate_margin: float = NOISE_GATE_MARGIN,
         preset_noise_floor: Optional[float] = None,
         match_threshold: float = MATCH_THRESHOLD,
+        match_method: DetectionMethod = "waveform",
         send_enabled: bool = True,
         min_press_interval: float = 0.25,
     ) -> None:
+        """Initialise the worker thread.
+
+        Args:
+            device_index: Index of the input device to capture audio from.
+            samples: Recorded reference samples grouped by identifier.
+            note_map: Mapping from sample identifier to keyboard key.
+            channels: Number of audio channels.
+            parent: Optional Qt parent.
+            sample_rate: Sampling frequency of the audio stream.
+            buffer_size: Number of samples per processing buffer.
+            hop_size: Hop size for overlapping windows.
+            hp_cutoff: High-pass filter cutoff frequency.
+            noise_gate_duration: Duration used to calibrate the noise gate.
+            noise_gate_margin: Margin applied to the noise floor.
+            preset_noise_floor: Pre-calibrated noise floor if available.
+            match_threshold: Minimum similarity score for detection.
+            match_method: Technique for comparing audio segments.
+            send_enabled: Whether key presses should be emitted.
+            min_press_interval: Minimum time between successive key events.
+        """
         super().__init__(parent)
         self.device_index = device_index
         self.samples = samples
@@ -61,6 +82,7 @@ class SoundWorker(QtCore.QThread):
         self.buffer_size = buffer_size
         self.hop_size = hop_size
         self.match_threshold = match_threshold
+        self.match_method = match_method
         self.min_press_interval = min_press_interval
         self._last_emit = 0.0
         self._stop_event = threading.Event()
@@ -83,7 +105,13 @@ class SoundWorker(QtCore.QThread):
             return
         segment = np.concatenate(list(self.buffer))
         self.buffer.clear()
-        key = match_sample(segment, self.samples, threshold=self.match_threshold)
+        key = match_sample(
+            segment,
+            self.samples,
+            threshold=self.match_threshold,
+            method=self.match_method,
+            sample_rate=self.sample_rate,
+        )
         if key is not None:
             now = time.time()
             if now - self._last_emit >= self.min_press_interval:

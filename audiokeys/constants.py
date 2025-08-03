@@ -51,6 +51,12 @@ HP_FILTER_CUTOFF: float = 60.0
 # introduce false positives.
 MATCH_THRESHOLD: float = 0.8
 
+# Default technique used when comparing an audio segment to stored
+# reference samples. ``"waveform"`` performs raw cosine similarity on the
+# waveform, ``"mfcc"`` compares mean MFCC vectors and ``"dtw"`` applies
+# Dynamic Time Warping over MFCC sequences.
+MATCH_METHOD: str = "waveform"
+
 __all__ = [
     "SAMPLE_RATE",
     "BUFFER_SIZE",
@@ -59,4 +65,5 @@ __all__ = [
     "NOISE_GATE_MARGIN",
     "HP_FILTER_CUTOFF",
     "MATCH_THRESHOLD",
+    "MATCH_METHOD",
 ]
