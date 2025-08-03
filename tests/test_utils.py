@@ -19,7 +19,7 @@ sys.modules["PySide6.QtCore"] = _dummy_mod
 sys.modules["PySide6.QtWidgets"] = _dummy_mod
 sys.modules["PySide6.QtGui"] = _dummy_mod
 
-from audiokeys.utils import generate_sample_id
+from audiokeys.utils import generate_sample_id  # noqa: E402
 
 
 def test_generate_sample_id_unique_increment():

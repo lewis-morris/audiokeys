@@ -4,8 +4,30 @@ from __future__ import annotations
 
 from typing import Iterable, Literal, Mapping, Optional, Sequence
 
-import numpy as np
+import sys
 import threading
+import types
+
+import numpy as np
+
+try:  # pragma: no cover - exercised indirectly
+    import numba  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - runtime fallback when numba is absent
+    numba = types.ModuleType("numba")
+
+    def _decorator(*args, **kwargs):
+        def wrap(func):
+            return func
+
+        if args and callable(args[0]):
+            return args[0]
+        return wrap
+
+    numba.jit = _decorator  # type: ignore[attr-defined]
+    numba.stencil = _decorator  # type: ignore[attr-defined]
+    numba.guvectorize = _decorator  # type: ignore[attr-defined]
+    sys.modules["numba"] = numba
+
 import librosa
 
 # Supported matching techniques
@@ -125,9 +147,21 @@ def record_until_silence(
     channels: int = 1,
     stop_event: Optional["threading.Event"] = None,
 ) -> np.ndarray:
-    """Record audio until ``silence_duration`` of silence is detected.
+    """Record audio until a period of silence is detected.
 
-    Recording stops early if ``stop_event`` is set.
+    Args:
+        device_index: Index of the audio input device.
+        sample_rate: Sampling rate of the device in Hertz.
+        hop_size: Number of samples processed per iteration.
+        threshold: RMS amplitude below which audio is considered silent.
+        silence_duration: Consecutive seconds of silence required to stop.
+        max_duration: Maximum length of the recording in seconds.
+        channels: Number of input channels to record.
+        stop_event: Optional event that, when set, aborts recording early.
+
+    Returns:
+        Recorded audio samples. An empty array is returned if no audio was
+        captured.
     """
     import sounddevice as sd
 

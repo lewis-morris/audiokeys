@@ -9,7 +9,9 @@ import sys
 import types
 
 sys.modules.setdefault("sounddevice", types.SimpleNamespace())
-sys.modules.setdefault("utils", types.SimpleNamespace(elevate_and_setup_uinput=lambda: None))
+sys.modules.setdefault(
+    "utils", types.SimpleNamespace(elevate_and_setup_uinput=lambda: None)
+)
 
 
 class _DummySignal:

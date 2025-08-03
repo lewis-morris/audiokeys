@@ -557,19 +557,19 @@ class MainWindow(QtWidgets.QMainWindow):
             lbl.setStyleSheet("background-color: yellow")
             QtCore.QTimer.singleShot(300, lambda: lbl.setStyleSheet(""))
 
-    def _on_worker_done(self):
-        # Safety if worker ends by itself (device closed etc.)ljh
+    def _on_worker_done(self) -> None:
+        """Reset the interface when the background worker stops."""
+
         self.start_btn.setText("Start Listening")
         self.listen_lbl.setVisible(False)
-        # Reset meters
         if hasattr(self, "level_bar"):
             self.level_bar.setValue(0)
 
     # -----------------------------------------------------------------
-    def _append_log(self, msg: str):
-        # append at the end
+    def _append_log(self, msg: str) -> None:
+        """Append ``msg`` to the output log."""
+
         self.log.appendPlainText(msg)
-        # ensure the new text is visible
         self.log.ensureCursorVisible()
 
     # -----------------------------------------------------------------
@@ -1406,7 +1406,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.buffer_size_spin.setSingleStep(256)
         self.buffer_size_spin.setValue(default_buf)
         form.addRow(
-            "Buffer size",
+            "Buffer size (samples)",
             make_field(
                 self.buffer_size_spin,
                 "Number of samples per analysis buffer. Larger buffers reduce CPU usage but increase latency.",
@@ -1423,7 +1423,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.gate_margin_spin.setDecimals(2)
         self.gate_margin_spin.setValue(default_gate_margin)
         form.addRow(
-            "Noise gate margin",
+            "Noise gate margin (sensitivity)",
             make_field(
                 self.gate_margin_spin,
                 "Multiplier applied to the measured noise floor; values above 1.0 make detection less sensitive.",
@@ -1437,7 +1437,7 @@ class SettingsDialog(QtWidgets.QDialog):
         if default_method in ("waveform", "mfcc", "dtw"):
             self.method_combo.setCurrentText(default_method)
         form.addRow(
-            "Detection method",
+            "Matching algorithm",
             make_field(
                 self.method_combo,
                 "Algorithm used to compare recorded samples.",
@@ -1454,7 +1454,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.match_thresh_spin.setDecimals(2)
         self.match_thresh_spin.setValue(default_match)
         form.addRow(
-            "Match threshold",
+            "Match threshold (0–1)",
             make_field(
                 self.match_thresh_spin,
                 "Minimum cosine similarity required for detection; lower values increase sensitivity.",
@@ -1471,7 +1471,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.hp_cutoff_spin.setDecimals(1)
         self.hp_cutoff_spin.setValue(default_hp_cutoff)
         form.addRow(
-            "High-pass cutoff",
+            "High-pass cutoff (Hz)",
             make_field(
                 self.hp_cutoff_spin,
                 "Cutoff frequency (Hz) of the high-pass filter; frequencies below this are attenuated to remove rumble and hum.",
