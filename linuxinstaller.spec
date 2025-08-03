@@ -4,7 +4,9 @@ from PyInstaller.utils.hooks import (
     collect_all,
     collect_submodules,
     collect_dynamic_libs,
+    collect_data_files
 )
+from pathlib import Path
 import os
 
 block_cipher = None
@@ -24,12 +26,25 @@ hiddenimports += [
     "PySide6.QtWidgets",
 ]
 
-# 4) Bundle your asset files (including splash.png so it's in dist/)
-asset_dir = os.path.join("audiokeys", "assets")
-for fn in ("icon.png", "splash.png"):
-    src = os.path.join(asset_dir, fn)
-    if os.path.exists(src):
-        datas.append((src, os.path.join("audiokeys", "assets")))
+pk_datas, pk_bins, pk_hidden = collect_all("q_materialise")
+datas += pk_datas
+binaries += pk_bins
+hiddenimports += pk_hidden
+
+
+asset_dir = Path("audiokeys") / "assets"
+datas += [
+    (str(p), "assets")  # ← was "audiokeys/assets"
+    for p in asset_dir.glob("*")
+    if p.is_file() and p.suffix.lower() != ".xcf"
+]
+
+hiddenimports += ["PySide6.QtSvg"]
+
+binaries += collect_dynamic_libs("sounddevice")
+# aubio may or may not ship shared libs; harmless if none:
+binaries += collect_dynamic_libs("aubio")
+
 
 # ─── Analysis ───────────────────────────────────────────────────
 a = Analysis(

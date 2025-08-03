@@ -956,7 +956,12 @@ def run_gui():
 
     inject_style(app, style="crimson_depth")
 
-    icon_file = resource_path("assets/icon.ico")
+    if sys.platform.startswith("linux"):
+        ext = ".png"
+    else:
+        ext = ".ico"
+
+    icon_file = resource_path("assets/icon" + ext)
     icon = QIcon(icon_file)
 
     app.setWindowIcon(icon)

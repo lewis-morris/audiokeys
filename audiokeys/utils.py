@@ -56,22 +56,17 @@ chmod 666 /dev/uinput 2>/dev/null || true
 
 
 def resource_path(relative_path: str) -> str:
-    """Return the absolute path to a bundled resource.
-
-    Args:
-        relative_path: Path relative to the package directory.
-
-    Returns:
-        Absolute path to the requested resource.
-    """
     if getattr(sys, "frozen", False):
-        # PyInstaller places extracted files in _MEIPASS
-        base_path = getattr(sys, "_MEIPASS")
+        base = getattr(sys, "_MEIPASS")
+        # try /_MEIPASS/<relative>
+        direct = os.path.join(base, relative_path)
+        if os.path.exists(direct):
+            return direct
+        # fallback: /_MEIPASS/audiokeys/<relative>
+        return os.path.join(base, "audiokeys", relative_path)
     else:
-        # running in a normal Python environment
-        base_path = os.path.abspath(os.path.dirname(__file__))
-
-    return os.path.join(base_path, relative_path)
+        base = os.path.abspath(os.path.dirname(__file__))
+        return os.path.join(base, relative_path)
 
 
 def generate_sample_id(base: str, existing: Iterable[str]) -> str:

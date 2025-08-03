@@ -40,6 +40,8 @@ dependencies = [
     "scipy>=1.16.0",
     "appdirs>=1.4.4",
     "librosa>=0.10.2",
+    "appdirs>=1.4.4",
+    "q-materialise>=0.1.8"
 ]
 
 [dependency-groups]
