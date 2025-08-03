@@ -36,6 +36,15 @@ def test_match_sample_threshold_none() -> None:
     assert key is None
 
 
+def test_match_sample_handles_multiple_refs() -> None:
+    """``match_sample`` should consider all reference samples for a key."""
+    ref1 = np.array([1.0, 0.0, 0.0])
+    ref2 = np.array([0.0, 1.0, 0.0])
+    segment = ref2 + np.random.normal(0, 0.01, size=3)
+    key = match_sample(segment, {"x": [ref1, ref2]}, threshold=0.5)
+    assert key == "x"
+
+
 def test_record_until_silence_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     class DummyStream:
         def __enter__(self) -> "DummyStream":

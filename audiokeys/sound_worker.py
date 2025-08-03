@@ -5,7 +5,7 @@ from __future__ import annotations
 import gc
 import threading
 from collections import deque
-from typing import Mapping, MutableMapping, Optional
+from typing import Mapping, MutableMapping, Optional, Sequence
 import time
 
 import numpy as np
@@ -35,7 +35,7 @@ class SoundWorker(QtCore.QThread):
     def __init__(
         self,
         device_index: int,
-        samples: MutableMapping[str, np.ndarray],
+        samples: MutableMapping[str, Sequence[np.ndarray]],
         note_map: Mapping[str, str],
         *,
         channels: int = 1,
