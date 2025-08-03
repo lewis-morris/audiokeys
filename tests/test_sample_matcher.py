@@ -80,6 +80,45 @@ def test_match_sample_dtw() -> None:
     assert key == "a"
 
 
+def test_dtw_segment_mfcc_computed_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DTW should compute the segment MFCC only once per call."""
+
+    import librosa
+
+    sr = 8000
+    segment = _sine(440, sr)
+    ref_a = _sine(440, sr)
+    ref_b = _sine(660, sr)
+
+    calls = 0
+
+    original = librosa.feature.mfcc
+
+    def counting_mfcc(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(librosa.feature, "mfcc", counting_mfcc)
+
+    match_sample(
+        segment,
+        {"a": [ref_a], "b": [ref_b]},
+        threshold=0.1,
+        method="dtw",
+        sample_rate=sr,
+    )
+
+    # Expect three calls: one for the segment and one for each reference
+    assert calls == 3
+
+
+def test_default_match_threshold() -> None:
+    from audiokeys.constants import MATCH_THRESHOLD
+
+    assert MATCH_THRESHOLD == pytest.approx(0.2)
+
+
 def test_record_until_silence_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     class DummyStream:
         def __enter__(self) -> "DummyStream":

@@ -46,10 +46,11 @@ HP_FILTER_CUTOFF: float = 60.0
 
 # ─── Sample matching defaults ────────────────────────────────────────────
 
-# Minimum cosine similarity required for a segment to be considered a
-# match to a reference sample. Lower values increase sensitivity but may
-# introduce false positives.
-MATCH_THRESHOLD: float = 0.8
+# Minimum similarity score required for a segment to be considered a
+# match to a reference sample.  A lower default of ``0.2`` works better
+# with MFCC and DTW based matching while still being suitable for
+# waveform comparison.
+MATCH_THRESHOLD: float = 0.2
 
 # Default technique used when comparing an audio segment to stored
 # reference samples. ``"waveform"`` performs raw cosine similarity on the
